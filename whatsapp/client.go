@@ -1010,7 +1010,15 @@ func (c *Client) createLlamaStackAgent(client llamastack.Client, modelID string)
 	c.listAvailableToolGroups(client)
 
 	// Banking assistant instructions with available tools
-	instructions := `You are a helpful banking assistant. Use the knowledge search tool to answer questions about banking services and products, the web search tool to find current banking information, and the MCP tools to access user banking data when needed. Make multiple tool calls to get complete account details including statements and transactions. Do not retrieve info not asked by the user. Always use the phone +353 85 148 0072. If no answer is found, say so directly.`
+	instructions := `You are a helpful banking assistant. You MUST use the available tools to retrieve information immediately when needed. that includes using knowledge_search and mcp tools.
+For write operation as updates do only knowledge_search , do not try to update the data.
+IMPORTANT: When a user asks for their personal information (like address, account details, statements, etc.), you MUST call the appropriate mcp tool with phone number "+353 85 148 0072" to retrieve their data. Do not just describe what you would do - actually execute the tool call.
+
+For banking knowledge questions, use the knowledge_search tool to find relevant information from the banking knowledge base.
+
+Always make the necessary tool calls first, then provide the user with the actual retrieved information. Never show tool calls as text - execute them and use the results to answer the user's question.
+
+If you need to search for current banking information, use the knowledge search tool. If you need user-specific data, use the MCP tools with the phone number +353 85 148 0072.`
 
 	// Create agent configuration with available tools
 	agentConfig := llamastack.AgentConfigParam{
@@ -1018,14 +1026,6 @@ func (c *Client) createLlamaStackAgent(client llamastack.Client, modelID string)
 		Model:        modelID, // Use the model from environment (vllm-inference/llama-3-2-3b-instruct)
 		Name:         llamastack.String("WhatsApp Banking Assistant"),
 		Toolgroups: []llamastack.AgentConfigToolgroupUnionParam{
-			// Web search tool for banking information
-			{
-				OfString: llamastack.String("builtin::websearch"),
-			},
-			// WhatsApp MCP tools for user information (using only one to avoid conflicts)
-			{
-				OfString: llamastack.String("mcp::redbank-financials"),
-			},
 			// Knowledge search tool with vector database
 			{
 				OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
@@ -1037,9 +1037,13 @@ func (c *Client) createLlamaStackAgent(client llamastack.Client, modelID string)
 					},
 				},
 			},
+			// WhatsApp MCP tools for user information (using only one to avoid conflicts)
+			{
+				OfString: llamastack.String("mcp::redbank-financials"),
+			},
 		},
 		ToolConfig: llamastack.AgentConfigToolConfigParam{
-			ToolChoice: "required", // Use "required" instead of "auto" to ensure tools are used
+			ToolChoice: "auto", // Use "auto" to let the agent decide when to use tools
 		},
 	}
 
@@ -1155,6 +1159,8 @@ func (c *Client) generateAgentResponse(client llamastack.Client, agentID, userMe
 			}
 		case "step_complete":
 			step := event.Payload.StepDetails
+			log.Printf("🔧 Step completed - Type: %s, StepID: %s", step.StepType, step.StepID)
+
 			if step.StepType == "inference" && step.ModelResponse.Role == "assistant" {
 				// Extract the response content
 				if step.ModelResponse.Content.OfString != "" {
@@ -1169,6 +1175,23 @@ func (c *Client) generateAgentResponse(client llamastack.Client, agentID, userMe
 						}
 					}
 				}
+			} else if step.StepType == "tool_execution" {
+				log.Printf("🔧 Tool execution completed - StepID: %s", step.StepID)
+				// Log tool responses for debugging
+				if len(step.ToolResponses) > 0 {
+					for i, toolResp := range step.ToolResponses {
+						log.Printf("🔧 Tool response %d: %+v", i, toolResp)
+					}
+				}
+			}
+		case "step_progress":
+			delta := event.Payload.Delta
+			log.Printf("🔄 Step progress - Type: %s", delta.Type)
+
+			if delta.Type == "tool_call" && delta.ToolCall.ToolName != "" {
+				log.Printf("🔧 Tool call in progress: %s with args: %+v", delta.ToolCall.ToolName, delta.ToolCall.Arguments)
+			} else if delta.Type == "text" && delta.Text != "" {
+				log.Printf("📝 Text progress: %s", delta.Text)
 			}
 		case "turn_complete":
 			log.Printf("✅ Turn completed")
