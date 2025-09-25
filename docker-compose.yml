@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  whatsapp-mcp-server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
+      - ./qr_codes:/app/qr_codes
+    environment:
+      - PORT=8080
+      - WHATSAPP_DB_PATH=/app/data/whatsapp.db
+      - WHATSAPP_MEDIA_DIR=/app/media
+      - QR_CODE_DIR=/app/qr_codes
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
