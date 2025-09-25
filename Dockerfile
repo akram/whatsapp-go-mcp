@@ -1,8 +1,8 @@
-# Use the official Go image as the base image
-FROM golang:1.21-alpine AS builder
+# Use UBI9 with Go as the base image for building
+FROM registry.redhat.io/ubi9/go-toolset:latest AS builder
 
 # Install necessary packages
-RUN apk add --no-cache git sqlite-dev gcc musl-dev
+RUN dnf install -y git sqlite-devel gcc && dnf clean all
 
 # Set the working directory
 WORKDIR /app
@@ -19,11 +19,11 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o whatsapp-mcp-server .
 
-# Use a minimal image for the final stage
-FROM alpine:latest
+# Use UBI9 minimal for the final stage
+FROM registry.redhat.io/ubi9/ubi-minimal:latest
 
 # Install necessary packages
-RUN apk --no-cache add ca-certificates sqlite
+RUN microdnf install -y sqlite ca-certificates && microdnf clean all
 
 # Create app directory
 WORKDIR /app

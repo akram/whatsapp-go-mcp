@@ -1,0 +1,32 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: whatsapp-mcp-server
+  labels:
+    app: whatsapp-mcp-server
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/akram/whatsapp-go-mcp.git
+      ref: main
+    contextDir: /
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+      from:
+        kind: DockerImage
+        name: registry.redhat.io/ubi9/ubi-minimal:latest
+  output:
+    to:
+      kind: ImageStreamTag
+      name: whatsapp-mcp-server:latest
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: whatsapp-mcp-server:latest
+  runPolicy: Serial

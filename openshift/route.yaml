@@ -1,0 +1,16 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: whatsapp-mcp-server
+  labels:
+    app: whatsapp-mcp-server
+spec:
+  to:
+    kind: Service
+    name: whatsapp-mcp-server
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

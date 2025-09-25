@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whatsapp-mcp-server
+  labels:
+    app: whatsapp-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whatsapp-mcp-server
+  template:
+    metadata:
+      labels:
+        app: whatsapp-mcp-server
+    spec:
+      containers:
+      - name: whatsapp-mcp-server
+        image: whatsapp-mcp-server:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: PORT
+          value: "8080"
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: whatsapp-data
+          mountPath: /app/data
+        - name: whatsapp-media
+          mountPath: /app/media
+      volumes:
+      - name: whatsapp-data
+        persistentVolumeClaim:
+          claimName: whatsapp-data-pvc
+      - name: whatsapp-media
+        persistentVolumeClaim:
+          claimName: whatsapp-media-pvc
