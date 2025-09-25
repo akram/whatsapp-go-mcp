@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	llamastack "github.com/llamastack/llama-stack-client-go"
+	"github.com/llamastack/llama-stack-client-go/option"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -30,61 +31,11 @@ import (
 
 // Client wraps the WhatsApp client with additional functionality
 type Client struct {
-	client           *whatsmeow.Client
-	db               *models.Database
-	deviceStore      *store.Device
-	eventHandlerID   uint32
-	mediaDir         string
-	llamastackClient *LlamaStackClient
-}
-
-// LlamaStackClient represents a client for LlamaStack API
-type LlamaStackClient struct {
-	BaseURL     string
-	HTTPClient  *http.Client
-	Model       string
-	Temperature float64
-	MaxTokens   int
-}
-
-// LlamaStackToolgroup represents a toolgroup in LlamaStack
-type LlamaStackToolgroup struct {
-	Identifier  string            `json:"identifier"`
-	ProviderID  string            `json:"provider_id"`
-	MCPEndpoint map[string]string `json:"mcp_endpoint"`
-}
-
-// LlamaStackAgent represents an agent in LlamaStack
-type LlamaStackAgent struct {
-	Client    *LlamaStackClient
-	Model     string
-	SessionID string
-	Tools     []string
-}
-
-// LlamaStackRequest represents a request to LlamaStack
-type LlamaStackRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature float64   `json:"temperature"`
-	MaxTokens   int       `json:"max_tokens"`
-	Tools       []string  `json:"tools,omitempty"`
-}
-
-// Message represents a message in LlamaStack format
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// LlamaStackResponse represents a response from LlamaStack
-type LlamaStackResponse struct {
-	Choices []Choice `json:"choices"`
-}
-
-// Choice represents a choice in LlamaStack response
-type Choice struct {
-	Message Message `json:"message"`
+	client         *whatsmeow.Client
+	db             *models.Database
+	deviceStore    *store.Device
+	eventHandlerID uint32
+	mediaDir       string
 }
 
 // NewClient creates a new WhatsApp client
@@ -292,7 +243,7 @@ func (c *Client) handleAudioMessage(evt *events.Message, audioMsg *waE2E.AudioMe
 	message := &models.Message{
 		Time:      info.Timestamp,
 		Sender:    info.Sender.String(),
-		Content:   fmt.Sprintf("[%s Message]", strings.Title(messageType)),
+		Content:   fmt.Sprintf("[%s Message]", strings.ToUpper(messageType[:1])+messageType[1:]),
 		IsFromMe:  info.IsFromMe,
 		MediaType: messageType,
 		Filename:  "",
@@ -307,7 +258,7 @@ func (c *Client) handleAudioMessage(evt *events.Message, audioMsg *waE2E.AudioMe
 	}
 
 	// Update chat info
-	c.updateChatInfo(info.Chat, fmt.Sprintf("[%s Message]", strings.Title(messageType)), info.Timestamp)
+	c.updateChatInfo(info.Chat, fmt.Sprintf("[%s Message]", strings.ToUpper(messageType[:1])+messageType[1:]), info.Timestamp)
 
 	// Process audio/voice message
 	c.processAudioMessage(evt, audioMsg, messageType)
@@ -997,301 +948,42 @@ func (c *Client) sendAutoReply(chatJID string, message string) {
 }
 
 // createLlamaStackClient creates and configures a LlamaStack client
-func (c *Client) createLlamaStackClient() (*LlamaStackAgent, error) {
+func (c *Client) createLlamaStackClient() (llamastack.Client, string, error) {
+	log.Printf("🔗 Creating LlamaStack client")
+
 	// Get LlamaStack configuration from environment variables
-	llamastackBaseURL := os.Getenv("LLAMASTACK_BASE_URL")
-	if llamastackBaseURL == "" {
-		llamastackBaseURL = "http://ragathon-team-3-ragathon-team-3.apps.llama-rag-pool-b84hp.aws.rh-ods.com/"
+	baseURL := os.Getenv("LLAMASTACK_BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://ragathon-team-3-ragathon-team-3.apps.llama-rag-pool-b84hp.aws.rh-ods.com"
 	}
 
-	whatsappMCPSSEURL := os.Getenv("WHATSAPP_MCP_SSE_URL")
-	if whatsappMCPSSEURL == "" {
-		whatsappMCPSSEURL = "http://localhost:8080/sse"
+	apiKey := os.Getenv("LLAMASTACK_API_KEY")
+	modelID := os.Getenv("LLAMASTACK_MODEL")
+	if modelID == "" {
+		modelID = "vllm-inference/llama-3-2-3b-instruct"
 	}
 
-	llamastackModel := os.Getenv("LLAMASTACK_MODEL")
-	if llamastackModel == "" {
-		llamastackModel = "vllm-inference/llama-3-2-3b-instruct"
+	// Ensure model ID has provider prefix if not already present
+	if !strings.Contains(modelID, "/") {
+		modelID = "vllm-inference/" + modelID
 	}
 
-	llamastackTemperature := 0.7
-	if tempStr := os.Getenv("LLAMASTACK_TEMPERATURE"); tempStr != "" {
-		if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
-			llamastackTemperature = temp
-		}
+	log.Printf("🔗 LlamaStack Base URL: %s", baseURL)
+	log.Printf("🤖 LlamaStack Model: %s", modelID)
+	if apiKey != "" {
+		log.Printf("🔑 Using API Key: %s", apiKey[:min(len(apiKey), 8)]+"...")
+	} else {
+		log.Printf("⚠️ No API Key provided")
 	}
 
-	llamastackMaxTokens := 200
-	if tokensStr := os.Getenv("LLAMASTACK_MAX_TOKENS"); tokensStr != "" {
-		if tokens, err := strconv.Atoi(tokensStr); err == nil {
-			llamastackMaxTokens = tokens
-		}
-	}
-
-	log.Printf("🔗 LlamaStack Base URL: %s", llamastackBaseURL)
-	log.Printf("🔗 WhatsApp MCP SSE URL: %s", whatsappMCPSSEURL)
-	log.Printf("🤖 Using model: %s", llamastackModel)
-
-	// Create HTTP client with timeout
-	httpClient := &http.Client{
-		Timeout: 120 * time.Second,
-	}
-
-	// Create LlamaStack client
-	client := &LlamaStackClient{
-		BaseURL:     llamastackBaseURL,
-		HTTPClient:  httpClient,
-		Model:       llamastackModel,
-		Temperature: llamastackTemperature,
-		MaxTokens:   llamastackMaxTokens,
-	}
+	// Create the official LlamaStack client with configuration
+	client := llamastack.NewClient(
+		option.WithBaseURL(baseURL),
+		option.WithAPIKey(apiKey),
+	)
 
 	log.Printf("✅ LlamaStack client created successfully")
-	log.Printf("🔗 Connected to LlamaStack service at: %s", llamastackBaseURL)
-
-	// Test if LlamaStack service is accessible
-	if err := c.testLlamaStackConnection(client); err != nil {
-		log.Printf("⚠️ LlamaStack service test failed: %v", err)
-		log.Printf("⚠️ Continuing anyway - toolgroup registration might still work")
-	}
-
-	// Try to register the WhatsApp MCP toolgroup (optional - continue even if it fails)
-	toolgroupID := "mcp::whatsapp-mcp-auto-reply"
-	err := c.registerToolgroup(client, toolgroupID, whatsappMCPSSEURL)
-	if err != nil {
-		log.Printf("⚠️ Failed to register toolgroup (continuing without MCP tools): %v", err)
-		log.Printf("ℹ️ LlamaStack will work in basic mode without WhatsApp MCP tools")
-		// Continue without MCP tools - LlamaStack can still work without them
-		toolgroupID = ""
-	} else {
-		log.Printf("✅ WhatsApp MCP toolgroup registered: %s", toolgroupID)
-	}
-
-	// Create agent
-	var tools []string
-	if toolgroupID != "" {
-		tools = []string{toolgroupID}
-	}
-
-	agent := &LlamaStackAgent{
-		Client:    client,
-		Model:     llamastackModel,
-		SessionID: fmt.Sprintf("whatsapp_auto_reply_session_%d", time.Now().Unix()),
-		Tools:     tools,
-	}
-
-	log.Printf("✅ Agent created successfully")
-	log.Printf("🤖 Using AI model: %s", llamastackModel)
-	log.Printf("📱 Created session: %s", agent.SessionID)
-
-	return agent, nil
-}
-
-// registerToolgroup registers a toolgroup with LlamaStack
-func (c *Client) registerToolgroup(client *LlamaStackClient, toolgroupID, mcpEndpoint string) error {
-	// First, try to unregister any existing toolgroup
-	c.unregisterToolgroup(client, toolgroupID)
-
-	// Register the new toolgroup
-	toolgroup := LlamaStackToolgroup{
-		Identifier: toolgroupID,
-		ProviderID: "model-context-protocol",
-		MCPEndpoint: map[string]string{
-			"uri": mcpEndpoint,
-		},
-	}
-
-	jsonData, err := json.Marshal(toolgroup)
-	if err != nil {
-		return fmt.Errorf("failed to marshal toolgroup: %w", err)
-	}
-
-	// Try different possible endpoints for toolgroup registration
-	possibleEndpoints := []string{
-		fmt.Sprintf("%s/toolgroups", client.BaseURL),
-		fmt.Sprintf("%s/api/toolgroups", client.BaseURL),
-		fmt.Sprintf("%s/v1/toolgroups", client.BaseURL),
-		fmt.Sprintf("%s/tools", client.BaseURL),
-		fmt.Sprintf("%s/api/tools", client.BaseURL),
-	}
-
-	var lastErr error
-	for _, url := range possibleEndpoints {
-		log.Printf("🔗 Trying toolgroup registration at URL: %s", url)
-		log.Printf("📤 Toolgroup data: %s", string(jsonData))
-
-		req, err := http.NewRequest("POST", url, strings.NewReader(string(jsonData)))
-		if err != nil {
-			lastErr = fmt.Errorf("failed to create request: %w", err)
-			continue
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.HTTPClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to register toolgroup: %w", err)
-			continue
-		}
-
-		log.Printf("📊 Toolgroup registration response status: %d", resp.StatusCode)
-
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-			resp.Body.Close()
-			log.Printf("✅ Toolgroup registered successfully at: %s", url)
-			return nil
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		log.Printf("❌ Toolgroup registration failed at %s with status %d: %s", url, resp.StatusCode, string(body))
-		lastErr = fmt.Errorf("toolgroup registration failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return lastErr
-}
-
-// testLlamaStackConnection tests if the LlamaStack service is accessible
-func (c *Client) testLlamaStackConnection(client *LlamaStackClient) error {
-	// Try to access the root endpoint or health endpoint
-	testURLs := []string{
-		fmt.Sprintf("%s/", client.BaseURL),
-		fmt.Sprintf("%s/health", client.BaseURL),
-		fmt.Sprintf("%s/api/health", client.BaseURL),
-		fmt.Sprintf("%s/v1/health", client.BaseURL),
-	}
-
-	for _, url := range testURLs {
-		resp, err := client.HTTPClient.Get(url)
-		if err != nil {
-			log.Printf("⚠️ Failed to test %s: %v", url, err)
-			continue
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
-			log.Printf("✅ LlamaStack service accessible at: %s (status: %d)", url, resp.StatusCode)
-			return nil
-		}
-
-		log.Printf("⚠️ LlamaStack service returned status %d at: %s", resp.StatusCode, url)
-	}
-
-	return fmt.Errorf("could not establish connection to LlamaStack service")
-}
-
-// unregisterToolgroup unregisters a toolgroup from LlamaStack
-func (c *Client) unregisterToolgroup(client *LlamaStackClient, toolgroupID string) error {
-	// List existing toolgroups
-	url := fmt.Sprintf("%s/toolgroups", client.BaseURL)
-	resp, err := client.HTTPClient.Get(url)
-	if err != nil {
-		log.Printf("⚠️ Failed to list toolgroups: %v", err)
-		return nil // Non-critical error
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil // Non-critical error
-	}
-
-	var toolgroups []LlamaStackToolgroup
-	if err := json.NewDecoder(resp.Body).Decode(&toolgroups); err != nil {
-		log.Printf("⚠️ Failed to decode toolgroups: %v", err)
-		return nil // Non-critical error
-	}
-
-	// Find and unregister matching toolgroups
-	for _, tg := range toolgroups {
-		if strings.Contains(tg.Identifier, toolgroupID) {
-			log.Printf("🗑️ Unregistering existing toolgroup: %s", tg.Identifier)
-
-			deleteURL := fmt.Sprintf("%s/toolgroups/%s", client.BaseURL, tg.Identifier)
-			req, err := http.NewRequest("DELETE", deleteURL, nil)
-			if err != nil {
-				log.Printf("⚠️ Failed to create delete request: %v", err)
-				continue
-			}
-
-			deleteResp, err := client.HTTPClient.Do(req)
-			if err != nil {
-				log.Printf("⚠️ Failed to delete toolgroup: %v", err)
-				continue
-			}
-			deleteResp.Body.Close()
-		}
-	}
-
-	return nil
-}
-
-// generateResponse generates a response using LlamaStack
-func (c *Client) generateResponse(agent *LlamaStackAgent, userMessage string) (string, error) {
-	// Create system message based on available tools
-	systemMessage := "You are a helpful WhatsApp assistant. "
-	if len(agent.Tools) > 0 {
-		systemMessage += "You can use the WhatsApp MCP tools to:\n- Search and manage WhatsApp contacts\n- List and read WhatsApp messages\n- Manage WhatsApp chats\n- Send messages and files\n- Get message context and interactions\n\nAlways be helpful and provide clear information about WhatsApp operations."
-	} else {
-		systemMessage += "You are here to help users with general questions and provide helpful responses. Keep your answers concise and friendly."
-	}
-
-	// Create messages for the conversation
-	messages := []Message{
-		{
-			Role:    "system",
-			Content: systemMessage,
-		},
-		{
-			Role:    "user",
-			Content: userMessage,
-		},
-	}
-
-	// Create request
-	request := LlamaStackRequest{
-		Model:       agent.Model,
-		Messages:    messages,
-		Temperature: agent.Client.Temperature,
-		MaxTokens:   agent.Client.MaxTokens,
-		Tools:       agent.Tools,
-	}
-
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Send request to LlamaStack
-	url := fmt.Sprintf("%s/chat/completions", agent.Client.BaseURL)
-	req, err := http.NewRequest("POST", url, strings.NewReader(string(jsonData)))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := agent.Client.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var response LlamaStackResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices received")
-	}
-
-	return response.Choices[0].Message.Content, nil
+	return client, modelID, nil
 }
 
 // processWithLlamaStack processes a text message using LlamaStack
@@ -1300,35 +992,110 @@ func (c *Client) processWithLlamaStack(evt *events.Message, content string) {
 
 	log.Printf("🤖 Processing message with LlamaStack: %s", content)
 
-	// Create or get LlamaStack client
-	if c.llamastackClient == nil {
-		agent, err := c.createLlamaStackClient()
-		if err != nil {
-			log.Printf("❌ Failed to create LlamaStack client: %v", err)
-			c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble connecting to my AI assistant right now. Please try again later.")
-			return
-		}
-		c.llamastackClient = agent.Client
-	}
-
-	// Create agent for this request
-	agent := &LlamaStackAgent{
-		Client:    c.llamastackClient,
-		Model:     c.llamastackClient.Model,
-		SessionID: fmt.Sprintf("whatsapp_session_%d", time.Now().Unix()),
-		Tools:     []string{"mcp::whatsapp-mcp-auto-reply"},
-	}
-
-	// Generate response using LlamaStack
-	response, err := c.generateResponse(agent, content)
+	// Create LlamaStack client
+	client, _, err := c.createLlamaStackClient()
 	if err != nil {
-		log.Printf("❌ Failed to generate LlamaStack response: %v", err)
-		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble generating a response right now. Please try again later.")
+		log.Printf("❌ Failed to create LlamaStack client: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble connecting to my AI assistant right now. Please try again later.")
 		return
 	}
 
-	log.Printf("🤖 LlamaStack response: %s", response)
+	// Register a model with LlamaStack
+	model, err := client.Models.Register(context.TODO(), llamastack.ModelRegisterParams{
+		ModelID:    "llama-3-2-3b-instruct",
+		ProviderID: llamastack.String("vllm-inference"),
+	})
+	if err != nil {
+		log.Printf("❌ Failed to register model: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble with my AI model right now. Please try again later.")
+		return
+	}
+
+	log.Printf("✅ Model registered: %+v", model.Identifier)
+
+	// Generate response using the registered model
+	response, err := c.generateAIResponse(client, model.Identifier, content)
+	if err != nil {
+		log.Printf("❌ Failed to generate AI response: %v", err)
+		// Fall back to simple response
+		response = c.generateFallbackResponse(content)
+		log.Printf("🔄 Using fallback response: %s", response)
+	} else {
+		log.Printf("🤖 LlamaStack AI response: %s", response)
+	}
 
 	// Send the generated response
 	c.sendAutoReply(info.Chat.String(), response)
+}
+
+// generateAIResponse generates a response using the LlamaStack model
+func (c *Client) generateAIResponse(client llamastack.Client, modelID, userMessage string) (string, error) {
+	log.Printf("🤖 Generating AI response using model: %s", modelID)
+	log.Printf("💬 User message: %s", userMessage)
+
+	// Create chat completion request
+	completion, err := client.Chat.Completions.New(context.TODO(), llamastack.ChatCompletionNewParams{
+		Model: modelID,
+		Messages: []llamastack.ChatCompletionNewParamsMessageUnion{
+			{
+				OfUser: &llamastack.ChatCompletionNewParamsMessageUser{
+					Content: llamastack.ChatCompletionNewParamsMessageUserContentUnion{
+						OfString: llamastack.String(userMessage),
+					},
+				},
+			},
+		},
+		MaxTokens:   llamastack.Int(200),
+		Temperature: llamastack.Float(0.7),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create chat completion: %w", err)
+	}
+
+	// Extract response content
+	var responseText string
+	openAICompletion := completion.AsOpenAIChatCompletion()
+	if len(openAICompletion.Choices) > 0 {
+		choice := openAICompletion.Choices[0]
+		// Check if content is a string (simple case)
+		if choice.Message.Content.OfString != "" {
+			responseText = choice.Message.Content.OfString
+		} else if len(choice.Message.Content.OfChatCompletionNewResponseOpenAIChatCompletionChoiceMessageAssistantContentArray) > 0 {
+			// Check if content is an array (complex case)
+			contentItem := choice.Message.Content.OfChatCompletionNewResponseOpenAIChatCompletionChoiceMessageAssistantContentArray[0]
+			responseText = contentItem.Text
+		}
+	}
+
+	if responseText == "" {
+		return "", fmt.Errorf("no response content found in completion")
+	}
+
+	log.Printf("✅ AI response generated successfully")
+	return responseText, nil
+}
+
+// generateFallbackResponse generates a simple fallback response when LlamaStack is unavailable
+func (c *Client) generateFallbackResponse(content string) string {
+	lowerContent := strings.ToLower(strings.TrimSpace(content))
+
+	// Simple keyword-based responses
+	switch {
+	case strings.Contains(lowerContent, "hello") || strings.Contains(lowerContent, "hi"):
+		return "Hello! 👋 I'm here to help you with WhatsApp. How can I assist you today?"
+	case strings.Contains(lowerContent, "help"):
+		return "I can help you with WhatsApp operations like:\n• Searching contacts\n• Managing messages\n• Sending files\n• Getting chat information\n\nWhat would you like to do?"
+	case strings.Contains(lowerContent, "thank"):
+		return "You're welcome! 😊 Is there anything else I can help you with?"
+	case strings.Contains(lowerContent, "bye") || strings.Contains(lowerContent, "goodbye"):
+		return "Goodbye! 👋 Feel free to reach out anytime you need help with WhatsApp."
+	case strings.Contains(lowerContent, "time"):
+		return fmt.Sprintf("The current time is: %s", time.Now().Format("2006-01-02 15:04:05"))
+	case strings.Contains(lowerContent, "weather"):
+		return "I don't have access to weather information right now, but I can help you with WhatsApp-related tasks!"
+	case strings.Contains(lowerContent, "how are you"):
+		return "I'm doing well, thank you for asking! 😊 I'm here and ready to help you with WhatsApp operations."
+	default:
+		return "I received your message! While my AI assistant is temporarily unavailable, I'm still here to help you with WhatsApp operations. You can ask me about contacts, messages, or other WhatsApp features."
+	}
 }

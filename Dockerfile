@@ -23,7 +23,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o whatsapp-mcp-server .
+RUN CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -a -installsuffix cgo -o whatsapp-mcp-server .
 
 # Use UBI9 minimal for the final stage
 FROM registry.redhat.io/ubi9/ubi-minimal:latest
