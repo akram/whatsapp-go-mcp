@@ -15,6 +15,7 @@ import (
 
 	llamastack "github.com/llamastack/llama-stack-client-go"
 	"github.com/llamastack/llama-stack-client-go/option"
+	"github.com/llamastack/llama-stack-client-go/packages/param"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -954,13 +955,13 @@ func (c *Client) createLlamaStackClient() (llamastack.Client, string, error) {
 	// Get LlamaStack configuration from environment variables
 	baseURL := os.Getenv("LLAMASTACK_BASE_URL")
 	if baseURL == "" {
-		baseURL = "http://ragathon-team-3-ragathon-team-3.apps.llama-rag-pool-b84hp.aws.rh-ods.com"
+		baseURL = "http://ragathon-team-1-ragathon-team-1.apps.llama-rag-pool-b84hp.aws.rh-ods.com"
 	}
 
 	apiKey := os.Getenv("LLAMASTACK_API_KEY")
 	modelID := os.Getenv("LLAMASTACK_MODEL")
 	if modelID == "" {
-		modelID = "vllm-inference/llama-3-2-3b-instruct"
+		modelID = "vllm-inference/llama-4-scout-17b-16e-w4a16"
 	}
 
 	// Ensure model ID has provider prefix if not already present
@@ -986,93 +987,211 @@ func (c *Client) createLlamaStackClient() (llamastack.Client, string, error) {
 	return client, modelID, nil
 }
 
-// processWithLlamaStack processes a text message using LlamaStack
+// listAvailableToolGroups lists all available tool groups on the LlamaStack server
+func (c *Client) listAvailableToolGroups(client llamastack.Client) error {
+	log.Printf("🔍 Listing available tool groups...")
+
+	toolgroups, err := client.Toolgroups.List(context.TODO())
+	if err != nil {
+		log.Printf("❌ Failed to list tool groups: %v", err)
+		return err
+	}
+
+	log.Printf("📋 Available tool groups: %+v", toolgroups)
+
+	return nil
+}
+
+// createLlamaStackAgent creates an agent with tools and instructions
+func (c *Client) createLlamaStackAgent(client llamastack.Client, modelID string) (*llamastack.AgentNewResponse, error) {
+	log.Printf("🤖 Creating LlamaStack agent with model: %s", modelID)
+
+	// List available tool groups for debugging
+	c.listAvailableToolGroups(client)
+
+	// Banking assistant instructions with available tools
+	instructions := `You are a helpful banking assistant. Use the knowledge search tool to answer questions about banking services and products, the web search tool to find current banking information, and the MCP tools to access user banking data when needed. Make multiple tool calls to get complete account details including statements and transactions. Do not retrieve info not asked by the user. Always use the phone +353 85 148 0072. If no answer is found, say so directly.`
+
+	// Create agent configuration with available tools
+	agentConfig := llamastack.AgentConfigParam{
+		Instructions: instructions,
+		Model:        modelID, // Use the model from environment (vllm-inference/llama-3-2-3b-instruct)
+		Name:         llamastack.String("WhatsApp Banking Assistant"),
+		Toolgroups: []llamastack.AgentConfigToolgroupUnionParam{
+			// Web search tool for banking information
+			{
+				OfString: llamastack.String("builtin::websearch"),
+			},
+			// WhatsApp MCP tools for user information (using only one to avoid conflicts)
+			{
+				OfString: llamastack.String("mcp::redbank-financials"),
+			},
+			// Knowledge search tool with vector database
+			{
+				OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
+					Name: "builtin::rag/knowledge_search",
+					Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
+						"vector_db_ids": {
+							OfAnyArray: []any{"vs_1f1dd1b7-49ad-4ceb-8e8d-f0bf9afe2179"},
+						},
+					},
+				},
+			},
+		},
+		ToolConfig: llamastack.AgentConfigToolConfigParam{
+			ToolChoice: "required", // Use "required" instead of "auto" to ensure tools are used
+		},
+	}
+
+	// Create the agent
+	agent, err := client.Agents.New(context.TODO(), llamastack.AgentNewParams{
+		AgentConfig: agentConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create agent: %w", err)
+	}
+
+	log.Printf("✅ Agent created successfully with ID: %s", agent.AgentID)
+	return agent, nil
+}
+
+// processWithLlamaStack processes a text message using LlamaStack agent
 func (c *Client) processWithLlamaStack(evt *events.Message, content string) {
 	info := evt.Info
 
-	log.Printf("🤖 Processing message with LlamaStack: %s", content)
+	log.Printf("🤖 Processing message with LlamaStack agent: %s", content)
 
 	// Create LlamaStack client
-	client, _, err := c.createLlamaStackClient()
+	client, modelID, err := c.createLlamaStackClient()
 	if err != nil {
 		log.Printf("❌ Failed to create LlamaStack client: %v", err)
 		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble connecting to my AI assistant right now. Please try again later.")
 		return
 	}
 
-	// Register a model with LlamaStack
-	model, err := client.Models.Register(context.TODO(), llamastack.ModelRegisterParams{
-		ModelID:    "llama-3-2-3b-instruct",
-		ProviderID: llamastack.String("vllm-inference"),
-	})
+	// Create agent with tools and instructions
+	agent, err := c.createLlamaStackAgent(client, modelID)
 	if err != nil {
-		log.Printf("❌ Failed to register model: %v", err)
-		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble with my AI model right now. Please try again later.")
+		log.Printf("❌ Failed to create LlamaStack agent: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble setting up my AI assistant right now. Please try again later.")
 		return
 	}
 
-	log.Printf("✅ Model registered: %+v", model.Identifier)
+	log.Printf("✅ Agent created: %s", agent.AgentID)
 
-	// Generate response using the registered model
-	response, err := c.generateAIResponse(client, model.Identifier, content)
+	// Generate response using the agent
+	response, err := c.generateAgentResponse(client, agent.AgentID, content)
 	if err != nil {
-		log.Printf("❌ Failed to generate AI response: %v", err)
+		log.Printf("❌ Failed to generate agent response: %v", err)
 		// Fall back to simple response
 		response = c.generateFallbackResponse(content)
 		log.Printf("🔄 Using fallback response: %s", response)
 	} else {
-		log.Printf("🤖 LlamaStack AI response: %s", response)
+		log.Printf("🤖 LlamaStack agent response: %s", response)
 	}
 
 	// Send the generated response
 	c.sendAutoReply(info.Chat.String(), response)
 }
 
-// generateAIResponse generates a response using the LlamaStack model
-func (c *Client) generateAIResponse(client llamastack.Client, modelID, userMessage string) (string, error) {
-	log.Printf("🤖 Generating AI response using model: %s", modelID)
+// generateAgentResponse generates a response using the LlamaStack agent
+func (c *Client) generateAgentResponse(client llamastack.Client, agentID, userMessage string) (string, error) {
+	log.Printf("🤖 Generating agent response using agent: %s", agentID)
 	log.Printf("💬 User message: %s", userMessage)
 
-	// Create chat completion request
-	completion, err := client.Chat.Completions.New(context.TODO(), llamastack.ChatCompletionNewParams{
-		Model: modelID,
-		Messages: []llamastack.ChatCompletionNewParamsMessageUnion{
+	// Create a new session for the agent
+	session, err := client.Agents.Session.New(context.TODO(), agentID, llamastack.AgentSessionNewParams{
+		SessionName: "WhatsApp Banking Session",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create agent session: %w", err)
+	}
+
+	log.Printf("✅ Agent session created: %s", session.SessionID)
+
+	// Create a streaming turn with the user message
+	stream := client.Agents.Turn.NewStreaming(context.TODO(), session.SessionID, llamastack.AgentTurnNewParams{
+		AgentID: agentID,
+		Messages: []llamastack.AgentTurnNewParamsMessageUnion{
 			{
-				OfUser: &llamastack.ChatCompletionNewParamsMessageUser{
-					Content: llamastack.ChatCompletionNewParamsMessageUserContentUnion{
-						OfString: llamastack.String(userMessage),
+				OfUserMessage: &llamastack.UserMessageParam{
+					Content: llamastack.InterleavedContentUnionParam{
+						OfString: param.Opt[string]{Value: userMessage},
 					},
 				},
 			},
 		},
-		MaxTokens:   llamastack.Int(200),
-		Temperature: llamastack.Float(0.7),
 	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create chat completion: %w", err)
-	}
 
-	// Extract response content
-	var responseText string
-	openAICompletion := completion.AsOpenAIChatCompletion()
-	if len(openAICompletion.Choices) > 0 {
-		choice := openAICompletion.Choices[0]
-		// Check if content is a string (simple case)
-		if choice.Message.Content.OfString != "" {
-			responseText = choice.Message.Content.OfString
-		} else if len(choice.Message.Content.OfChatCompletionNewResponseOpenAIChatCompletionChoiceMessageAssistantContentArray) > 0 {
-			// Check if content is an array (complex case)
-			contentItem := choice.Message.Content.OfChatCompletionNewResponseOpenAIChatCompletionChoiceMessageAssistantContentArray[0]
-			responseText = contentItem.Text
+	log.Printf("✅ Agent streaming turn created")
+
+	// Process the streaming response
+	var finalResponse string
+	var turnID string
+	var hasError bool
+	var errorMessage string
+
+	for stream.Next() {
+		chunk := stream.Current()
+
+		// Log the chunk type for debugging
+		log.Printf("📦 Received chunk: %+v", chunk)
+
+		// Check for errors in the chunk
+		if errorField, exists := chunk.JSON.ExtraFields["error"]; exists && errorField.Valid() {
+			hasError = true
+			errorMessage = fmt.Sprintf("Agent error: %v", errorField)
+			log.Printf("❌ %s", errorMessage)
+			break
+		}
+
+		// Handle different types of streaming events
+		event := chunk.Event
+		switch event.Payload.EventType {
+		case "turn_start":
+			if event.Payload.TurnID != "" {
+				turnID = event.Payload.TurnID
+				log.Printf("✅ Turn started: %s", turnID)
+			}
+		case "step_complete":
+			step := event.Payload.StepDetails
+			if step.StepType == "inference" && step.ModelResponse.Role == "assistant" {
+				// Extract the response content
+				if step.ModelResponse.Content.OfString != "" {
+					finalResponse = step.ModelResponse.Content.OfString
+					log.Printf("🤖 Received assistant response: %s", finalResponse)
+				} else if len(step.ModelResponse.Content.OfInterleavedContentItemArray) > 0 {
+					for _, contentItem := range step.ModelResponse.Content.OfInterleavedContentItemArray {
+						if contentItem.Text != "" {
+							finalResponse = contentItem.Text
+							log.Printf("🤖 Received assistant response: %s", finalResponse)
+							break
+						}
+					}
+				}
+			}
+		case "turn_complete":
+			log.Printf("✅ Turn completed")
+			goto streamComplete
 		}
 	}
 
-	if responseText == "" {
-		return "", fmt.Errorf("no response content found in completion")
+streamComplete:
+
+	if err := stream.Err(); err != nil {
+		return "", fmt.Errorf("streaming error: %w", err)
 	}
 
-	log.Printf("✅ AI response generated successfully")
-	return responseText, nil
+	if hasError {
+		return "", fmt.Errorf(errorMessage)
+	}
+
+	if finalResponse == "" {
+		return "", fmt.Errorf("no response received from agent")
+	}
+
+	log.Printf("✅ Agent response generated successfully")
+	return finalResponse, nil
 }
 
 // generateFallbackResponse generates a simple fallback response when LlamaStack is unavailable
