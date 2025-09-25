@@ -1,8 +1,14 @@
 # Use UBI9 with Go as the base image for building
 FROM registry.redhat.io/ubi9/go-toolset:latest AS builder
 
+# Switch to root to install packages
+USER root
+
 # Install necessary packages
 RUN dnf install -y git sqlite-devel gcc && dnf clean all
+
+# Switch back to the default user (1001) for security
+USER 1001
 
 # Set the working directory
 WORKDIR /app
