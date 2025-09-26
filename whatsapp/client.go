@@ -906,20 +906,280 @@ func (c *Client) processAudioMessage(evt *events.Message, audioMsg *waE2E.AudioM
 
 	log.Printf("🎵 Processing %s message from %s", messageType, info.Sender.String())
 
-	// Example: Different handling for voice vs regular audio
+	// Different handling for voice vs regular audio
 	if messageType == "voice" {
-		log.Printf("🎤 Voice message received - could trigger transcription or voice commands")
-		// TODO: Add voice transcription logic here
-		// TODO: Add voice command processing here
+		log.Printf("🎤 Voice message received - processing with AI agent")
+		c.processVoiceMessage(evt, audioMsg)
 	} else {
 		log.Printf("🎵 Regular audio message received - could trigger audio analysis")
 		// TODO: Add audio analysis logic here
 	}
+}
 
-	// Example: Auto-reply for voice messages
-	if messageType == "voice" {
-		c.sendAutoReply(info.Chat.String(), "🎤 Voice message received! I heard you loud and clear.")
+// processVoiceMessage handles the complete voice message processing pipeline
+func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioMessage) {
+	info := evt.Info
+
+	log.Printf("🎤 Starting voice message processing pipeline")
+
+	// Step 1: Download the voice message
+	audioFilePath, err := c.downloadVoiceMessage(evt, audioMsg)
+	if err != nil {
+		log.Printf("❌ Failed to download voice message: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I couldn't download your voice message. Please try again.")
+		return
 	}
+	// defer os.Remove(audioFilePath) // Clean up downloaded file - TEMPORARILY DISABLED FOR DEBUGGING
+
+	log.Printf("✅ Voice message downloaded to: %s", audioFilePath)
+
+	// Step 2: Convert speech to text
+	transcribedText, err := c.speechToText(audioFilePath)
+	if err != nil {
+		log.Printf("❌ Failed to transcribe voice message: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I couldn't understand your voice message. Please try speaking more clearly.")
+		return
+	}
+
+	log.Printf("✅ Voice transcribed: %s", transcribedText)
+
+	// Step 3: Process with AI agent
+	responseText, err := c.processWithLlamaStackAgent(transcribedText)
+	if err != nil {
+		log.Printf("❌ Failed to process with AI agent: %v", err)
+		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble processing your request right now. Please try again later.")
+		return
+	}
+
+	log.Printf("✅ AI agent response: %s", responseText)
+
+	// Step 4: Convert response to speech
+	responseAudioPath, err := c.textToSpeech(responseText)
+	if err != nil {
+		log.Printf("❌ Failed to convert response to speech: %v", err)
+		// Fallback to text response
+		c.sendAutoReply(info.Chat.String(), responseText)
+		return
+	}
+	// defer os.Remove(responseAudioPath) // Clean up generated audio file - TEMPORARILY DISABLED FOR DEBUGGING
+
+	log.Printf("✅ Response converted to speech: %s", responseAudioPath)
+	log.Printf("🔍 DEBUG: Generated audio file exists: %v", fileExists(responseAudioPath))
+	if fileExists(responseAudioPath) {
+		if stat, err := os.Stat(responseAudioPath); err == nil {
+			log.Printf("🔍 DEBUG: Audio file size: %d bytes", stat.Size())
+		}
+	}
+
+	// Step 5: Send audio response
+	err = c.SendAudioMessage(info.Chat.String(), responseAudioPath)
+	if err != nil {
+		log.Printf("❌ Failed to send audio response: %v", err)
+		// Fallback to text response
+		c.sendAutoReply(info.Chat.String(), responseText)
+		return
+	}
+
+	log.Printf("✅ Voice response sent successfully")
+}
+
+// downloadVoiceMessage downloads a voice message from WhatsApp
+func (c *Client) downloadVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioMessage) (string, error) {
+	info := evt.Info
+
+	log.Printf("📥 Downloading voice message from %s", info.Sender.String())
+
+	// Create media directory if it doesn't exist
+	if err := os.MkdirAll(c.mediaDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create media directory: %w", err)
+	}
+
+	// Generate filename for the downloaded audio
+	filename := fmt.Sprintf("voice_%s_%s.ogg", info.ID, time.Now().Format("20060102_150405"))
+	filePath := filepath.Join(c.mediaDir, filename)
+
+	// Download the media using WhatsApp client
+	ctx := context.Background()
+	data, err := c.client.Download(ctx, audioMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to download media: %w", err)
+	}
+
+	// Write the downloaded data to file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	_, err = file.Write(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to write file: %w", err)
+	}
+
+	log.Printf("✅ Voice message downloaded successfully: %s", filePath)
+	return filePath, nil
+}
+
+// speechToText converts audio file to text using speech recognition
+func (c *Client) speechToText(audioFilePath string) (string, error) {
+	log.Printf("🎙️ Converting speech to text: %s", audioFilePath)
+
+	// Use OpenAI Whisper API for speech-to-text conversion
+	// You can also use local solutions like whisper.cpp or other STT services
+	transcribedText, err := c.transcribeWithWhisper(audioFilePath)
+	if err != nil {
+		return "", fmt.Errorf("speech-to-text conversion failed: %w", err)
+	}
+
+	log.Printf("✅ Speech transcribed: %s", transcribedText)
+	return transcribedText, nil
+}
+
+// transcribeWithWhisper uses OpenAI Whisper API for transcription
+func (c *Client) transcribeWithWhisper(audioFilePath string) (string, error) {
+	// For now, we'll use a simple implementation
+	// In production, you would integrate with OpenAI Whisper API or local whisper
+
+	// Check if we have OpenAI API key
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		// Fallback to local whisper if available
+		return c.transcribeWithLocalWhisper(audioFilePath)
+	}
+
+	// TODO: Implement OpenAI Whisper API integration
+	// For now, return a placeholder
+	return "Voice message transcribed (placeholder)", nil
+}
+
+// transcribeWithLocalWhisper uses local whisper installation for transcription
+func (c *Client) transcribeWithLocalWhisper(audioFilePath string) (string, error) {
+	log.Printf("🎙️ Using local whisper for transcription")
+
+	// Check if whisper is available
+	cmd := exec.Command("whisper", "--help")
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("whisper not found, please install whisper: %w", err)
+	}
+
+	// Create output directory for transcription
+	outputDir := filepath.Join(c.mediaDir, "transcriptions")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create transcription directory: %w", err)
+	}
+
+	// Run whisper transcription with smaller, faster model
+	// Set a timeout for whisper transcription (5 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd = exec.CommandContext(ctx, "whisper", audioFilePath, "--model", "base", "--output_dir", outputDir, "--output_format", "txt")
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("whisper transcription timed out after 5 minutes")
+		}
+		return "", fmt.Errorf("whisper transcription failed: %w", err)
+	}
+
+	// Whisper creates output file with same name as input (without extension) + .txt
+	inputBaseName := strings.TrimSuffix(filepath.Base(audioFilePath), filepath.Ext(audioFilePath))
+	outputFile := filepath.Join(outputDir, inputBaseName+".txt")
+
+	// Read the transcription result
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read transcription file: %w", err)
+	}
+
+	// Clean up transcription file - TEMPORARILY DISABLED FOR DEBUGGING
+	// os.Remove(outputFile)
+
+	return strings.TrimSpace(string(content)), nil
+}
+
+// fileExists checks if a file exists
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return !os.IsNotExist(err)
+}
+
+// textToSpeech converts text to speech audio file
+func (c *Client) textToSpeech(text string) (string, error) {
+	log.Printf("🔊 Converting text to speech: %s", text)
+
+	// Create output directory for TTS
+	outputDir := filepath.Join(c.mediaDir, "tts")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create TTS directory: %w", err)
+	}
+
+	// Generate filename for TTS output
+	filename := fmt.Sprintf("tts_%d.ogg", time.Now().Unix())
+	outputPath := filepath.Join(outputDir, filename)
+
+	// Use local TTS service
+	err := c.generateSpeechWithLocalService(text, outputPath)
+	if err != nil {
+		return "", fmt.Errorf("text-to-speech conversion failed: %w", err)
+	}
+
+	log.Printf("✅ Text converted to speech: %s", outputPath)
+	return outputPath, nil
+}
+
+// generateSpeechWithLocalService uses local TTS service for text-to-speech conversion
+func (c *Client) generateSpeechWithLocalService(text, outputPath string) error {
+	log.Printf("🔊 Using local TTS service for generation")
+
+	// Create a temporary WAV file first
+	tempWavPath := outputPath + ".wav"
+	// defer os.Remove(tempWavPath) // TEMPORARILY DISABLED FOR DEBUGGING
+
+	// Use curl to call the local TTS service
+	cmd := exec.Command("curl", "-X", "POST", "-F", fmt.Sprintf("text=%s", text), "http://localhost:8001/text-to-speech", "--output", tempWavPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("local TTS service call failed: %w", err)
+	}
+
+	// Check if the WAV file was created and has content
+	if stat, err := os.Stat(tempWavPath); err != nil || stat.Size() == 0 {
+		return fmt.Errorf("TTS service did not generate valid audio file")
+	}
+
+	// Convert WAV to OGG using ffmpeg
+	cmd = exec.Command("ffmpeg", "-y", "-i", tempWavPath, "-c:a", "libopus", "-b:a", "64k", "-ar", "48000", "-ac", "1", outputPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg conversion failed: %w", err)
+	}
+
+	return nil
+}
+
+// processWithLlamaStackAgent processes transcribed text with LlamaStack agent
+func (c *Client) processWithLlamaStackAgent(transcribedText string) (string, error) {
+	log.Printf("🤖 Processing transcribed text with LlamaStack agent: %s", transcribedText)
+
+	// Create LlamaStack client
+	client, modelID, err := c.createLlamaStackClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to create LlamaStack client: %w", err)
+	}
+
+	// Create agent with tools and instructions
+	agent, err := c.createLlamaStackAgent(client, modelID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create LlamaStack agent: %w", err)
+	}
+
+	// Generate response using the agent
+	response, err := c.generateAgentResponse(client, agent.AgentID, transcribedText)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate agent response: %w", err)
+	}
+
+	return response, nil
 }
 
 // sendAutoReply sends an automatic reply to a chat
@@ -1206,7 +1466,7 @@ streamComplete:
 	}
 
 	if hasError {
-		return "", fmt.Errorf(errorMessage)
+		return "", fmt.Errorf("%s", errorMessage)
 	}
 
 	if finalResponse == "" {

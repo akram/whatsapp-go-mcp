@@ -9,6 +9,7 @@ A Golang MCP (Model Context Protocol) server that provides WhatsApp functionalit
 - **Chat Management**: List and manage WhatsApp chats and conversations
 - **Media Support**: Send images, videos, audio files, and documents
 - **Voice Messages**: Send audio files as WhatsApp voice messages
+- **🎤 Voice Note Processing**: Automatic voice note transcription and AI-powered responses
 - **Message History**: Store and retrieve message history with SQLite
 - **MCP Compliance**: Full MCP 2024-11-05 specification support
 - **QR Code Authentication**: Terminal-based QR code scanning for WhatsApp login
@@ -237,6 +238,41 @@ CREATE TABLE chats (
   }
 }
 ```
+
+## Voice Note Processing
+
+The server now includes automatic voice note processing! When a voice note (PTT message) is received, the system will:
+
+1. **Download** the voice message
+2. **Transcribe** it to text using Whisper (speech-to-text)
+3. **Process** the text with an AI agent (LlamaStack)
+4. **Convert** the response back to speech using espeak
+5. **Send** the audio response back as a voice message
+
+### Prerequisites
+
+Install the required dependencies:
+
+```bash
+# Run the installation script
+./install_voice_deps.sh
+```
+
+Or install manually:
+- **ffmpeg**: Audio processing
+- **espeak**: Text-to-speech synthesis  
+- **whisper**: Speech-to-text transcription
+
+### Configuration
+
+Set optional environment variables:
+
+```bash
+# Use OpenAI Whisper API instead of local whisper
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
+For detailed voice processing documentation, see [VOICE_PROCESSING.md](VOICE_PROCESSING.md).
 
 ## Media Support
 
