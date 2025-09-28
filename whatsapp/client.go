@@ -978,10 +978,16 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 
 	log.Printf("🎤 Starting voice message processing pipeline")
 
+	// Step 0: Set voice recording presence to indicate we're processing
+	if err := c.setVoiceRecordingPresence(info.Chat.String()); err != nil {
+		log.Printf("⚠️ Failed to set voice recording presence: %v", err)
+	}
+
 	// Step 1: Download the voice message
 	audioFilePath, err := c.downloadVoiceMessage(evt, audioMsg)
 	if err != nil {
 		log.Printf("❌ Failed to download voice message: %v", err)
+		c.clearChatPresence(info.Chat.String()) // Clear presence on error
 		c.sendAutoReply(info.Chat.String(), "Sorry, I couldn't download your voice message. Please try again.")
 		return
 	}
@@ -993,6 +999,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 	transcribedText, err := c.speechToText(audioFilePath)
 	if err != nil {
 		log.Printf("❌ Failed to transcribe voice message: %v", err)
+		c.clearChatPresence(info.Chat.String()) // Clear presence on error
 		c.sendAutoReply(info.Chat.String(), "Sorry, I couldn't understand your voice message. Please try speaking more clearly.")
 		return
 	}
@@ -1003,6 +1010,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 	responseText, err := c.processWithLlamaStackAgent(transcribedText)
 	if err != nil {
 		log.Printf("❌ Failed to process with AI agent: %v", err)
+		c.clearChatPresence(info.Chat.String()) // Clear presence on error
 		c.sendAutoReply(info.Chat.String(), "Sorry, I'm having trouble processing your request right now. Please try again later.")
 		return
 	}
@@ -1014,6 +1022,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 	if err != nil {
 		log.Printf("❌ Failed to convert response to speech: %v", err)
 		// Fallback to text response
+		c.clearChatPresence(info.Chat.String()) // Clear presence on error
 		c.sendAutoReply(info.Chat.String(), responseText)
 		return
 	}
@@ -1032,6 +1041,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 	if err != nil {
 		log.Printf("❌ Failed to send audio response: %v", err)
 		// Fallback to text response
+		c.clearChatPresence(info.Chat.String()) // Clear presence on error
 		c.sendAutoReply(info.Chat.String(), responseText)
 		return
 	}
@@ -1040,6 +1050,11 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 	log.Printf("🔍 DEBUG: Sending text response for debugging")
 	debugText := fmt.Sprintf("🔍 DEBUG - Transcribed: \"%s\"\n\n🤖 AI Response: \"%s\"", transcribedText, responseText)
 	c.sendAutoReply(info.Chat.String(), debugText)
+
+	// Step 7: Clear voice recording presence
+	if err := c.clearChatPresence(info.Chat.String()); err != nil {
+		log.Printf("⚠️ Failed to clear chat presence: %v", err)
+	}
 
 	log.Printf("✅ Voice response and debug text sent successfully")
 }
@@ -1583,4 +1598,50 @@ func (c *Client) generateFallbackResponse(content string) string {
 	default:
 		return "I received your message! While my AI assistant is temporarily unavailable, I'm still here to help you with WhatsApp operations. You can ask me about contacts, messages, or other WhatsApp features."
 	}
+}
+
+// setVoiceRecordingPresence sets the chat presence to indicate voice recording
+func (c *Client) setVoiceRecordingPresence(chatJID string) error {
+	ctx := context.Background()
+	if err := c.EnsureConnected(ctx); err != nil {
+		return fmt.Errorf("failed to ensure connection for presence: %w", err)
+	}
+
+	recipientJID, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID for presence: %w", err)
+	}
+
+	log.Printf("🎤 Setting voice recording presence for %s", chatJID)
+	err = c.client.SendChatPresence(recipientJID, types.ChatPresenceComposing, types.ChatPresenceMediaAudio)
+	if err != nil {
+		log.Printf("❌ Failed to set voice recording presence: %v", err)
+		return fmt.Errorf("failed to set voice recording presence: %w", err)
+	}
+
+	log.Printf("✅ Voice recording presence set successfully")
+	return nil
+}
+
+// clearChatPresence clears the chat presence indicator
+func (c *Client) clearChatPresence(chatJID string) error {
+	ctx := context.Background()
+	if err := c.EnsureConnected(ctx); err != nil {
+		return fmt.Errorf("failed to ensure connection for presence: %w", err)
+	}
+
+	recipientJID, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID for presence: %w", err)
+	}
+
+	log.Printf("🔄 Clearing chat presence for %s", chatJID)
+	err = c.client.SendChatPresence(recipientJID, types.ChatPresencePaused, "")
+	if err != nil {
+		log.Printf("❌ Failed to clear chat presence: %v", err)
+		return fmt.Errorf("failed to clear chat presence: %w", err)
+	}
+
+	log.Printf("✅ Chat presence cleared successfully")
+	return nil
 }
