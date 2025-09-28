@@ -1046,17 +1046,16 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 		return
 	}
 
-	// Step 6: Also send text response for debugging purposes
-	log.Printf("🔍 DEBUG: Sending text response for debugging")
-	debugText := fmt.Sprintf("🔍 DEBUG - Transcribed: \"%s\"\n\n🤖 AI Response: \"%s\"", transcribedText, responseText)
-	c.sendAutoReply(info.Chat.String(), debugText)
+	// Step 6: Log debug information (disabled sending as message)
+	log.Printf("🔍 DEBUG - Transcribed: \"%s\"", transcribedText)
+	log.Printf("🤖 AI Response: \"%s\"", responseText)
 
 	// Step 7: Clear voice recording presence
 	if err := c.clearChatPresence(info.Chat.String()); err != nil {
 		log.Printf("⚠️ Failed to clear chat presence: %v", err)
 	}
 
-	log.Printf("✅ Voice response and debug text sent successfully")
+	log.Printf("✅ Voice response sent successfully")
 }
 
 // downloadVoiceMessage downloads a voice message from WhatsApp
