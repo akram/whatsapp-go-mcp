@@ -985,7 +985,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 		c.sendAutoReply(info.Chat.String(), "Sorry, I couldn't download your voice message. Please try again.")
 		return
 	}
-	// defer os.Remove(audioFilePath) // Clean up downloaded file - TEMPORARILY DISABLED FOR DEBUGGING
+	defer os.Remove(audioFilePath) // Clean up downloaded file
 
 	log.Printf("✅ Voice message downloaded to: %s", audioFilePath)
 
@@ -1017,7 +1017,7 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 		c.sendAutoReply(info.Chat.String(), responseText)
 		return
 	}
-	// defer os.Remove(responseAudioPath) // Clean up generated audio file - TEMPORARILY DISABLED FOR DEBUGGING
+	defer os.Remove(responseAudioPath) // Clean up generated audio file
 
 	log.Printf("✅ Response converted to speech: %s", responseAudioPath)
 	log.Printf("🔍 DEBUG: Generated audio file exists: %v", fileExists(responseAudioPath))
@@ -1154,8 +1154,8 @@ func (c *Client) transcribeWithLocalWhisper(audioFilePath string) (string, error
 		return "", fmt.Errorf("failed to read transcription file: %w", err)
 	}
 
-	// Clean up transcription file - TEMPORARILY DISABLED FOR DEBUGGING
-	// os.Remove(outputFile)
+	// Clean up transcription file
+	os.Remove(outputFile)
 
 	return strings.TrimSpace(string(content)), nil
 }
@@ -1196,7 +1196,7 @@ func (c *Client) generateSpeechWithLocalService(text, outputPath string) error {
 
 	// Create a temporary WAV file first
 	tempWavPath := outputPath + ".wav"
-	// defer os.Remove(tempWavPath) // TEMPORARILY DISABLED FOR DEBUGGING
+	defer os.Remove(tempWavPath) // Clean up temporary WAV file
 
 	// Use curl to call the TTS service
 	cmd := exec.Command("curl", "-X", "POST", "-F", fmt.Sprintf("text=%s", text), c.ttsUrl, "--output", tempWavPath)
