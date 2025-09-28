@@ -37,10 +37,11 @@ type Client struct {
 	deviceStore    *store.Device
 	eventHandlerID uint32
 	mediaDir       string
+	ttsUrl         string
 }
 
 // NewClient creates a new WhatsApp client
-func NewClient(dbPath, mediaDir string) (*Client, error) {
+func NewClient(dbPath, mediaDir, ttsUrl string) (*Client, error) {
 	// Create device store
 	ctx := context.Background()
 	logger := waLog.Noop
@@ -73,6 +74,7 @@ func NewClient(dbPath, mediaDir string) (*Client, error) {
 		db:          database,
 		deviceStore: deviceStore,
 		mediaDir:    mediaDir,
+		ttsUrl:      ttsUrl,
 	}
 
 	// Add event handler
@@ -562,11 +564,32 @@ func (c *Client) SendMessage(recipient string, message string) error {
 		Conversation: &message,
 	}
 
-	_, err = c.client.SendMessage(ctx, recipientJID, msg)
+	resp, err := c.client.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
 		log.Printf("❌ Failed to send message: %v", err)
 		return fmt.Errorf("failed to send message: %w", err)
 	}
+
+	// Store the sent message in the database
+	sentMessage := &models.Message{
+		Time:      time.Now(),
+		Sender:    c.client.Store.ID.String(), // Our own JID
+		Content:   message,
+		IsFromMe:  true,
+		MediaType: "text",
+		Filename:  "",
+		ChatJID:   recipientJID.String(),
+		MessageID: resp.ID, // Use the actual message ID from WhatsApp response
+	}
+
+	if err := c.db.StoreMessage(sentMessage); err != nil {
+		log.Printf("⚠️ Failed to store sent message in database: %v", err)
+	} else {
+		log.Printf("✅ Sent message stored in database")
+	}
+
+	// Update chat info
+	c.updateChatInfo(recipientJID, message, time.Now())
 
 	log.Printf("✅ Message sent successfully to %s", recipient)
 	return nil
@@ -705,7 +728,13 @@ func (c *Client) SendAudioMessage(recipient string, filePath string) error {
 	duration, err := getAudioDuration(filePath)
 	if err != nil {
 		log.Printf("⚠️ Could not determine audio duration: %v", err)
-		duration = 0 // Fallback to 0 if we can't determine duration
+		// Estimate duration (rough estimate: assume 1 second per 16KB for opus)
+		estimatedDuration := float64(fileInfo.Size()) / 16000.0
+		if estimatedDuration < 1 {
+			estimatedDuration = 1
+		}
+		duration = estimatedDuration
+		log.Printf("⏱️ Using estimated duration: %.2f seconds", duration)
 	} else {
 		log.Printf("⏱️ Audio duration: %.2f seconds", duration)
 	}
@@ -738,22 +767,45 @@ func (c *Client) SendAudioMessage(recipient string, filePath string) error {
 	fileSizePtr := uint64(fileInfo.Size())
 	msg := &waE2E.Message{
 		AudioMessage: &waE2E.AudioMessage{
-			URL:           &uploaded.URL,
-			Mimetype:      stringPtr(mimeType),
-			FileLength:    &fileSizePtr,
-			Seconds:       uint32Ptr(uint32(duration)), // Use actual duration
-			PTT:           boolPtr(true),               // Mark as voice message
-			FileSHA256:    uploaded.FileSHA256,
-			FileEncSHA256: uploaded.FileEncSHA256,
-			MediaKey:      uploaded.MediaKey,
+			URL:               &uploaded.URL,
+			Mimetype:          stringPtr("audio/ogg; codecs=opus"), // Use proper MIME type for voice messages
+			FileLength:        &fileSizePtr,
+			Seconds:           uint32Ptr(uint32(duration)), // Use actual duration
+			PTT:               boolPtr(true),               // Mark as voice message
+			FileSHA256:        uploaded.FileSHA256,
+			FileEncSHA256:     uploaded.FileEncSHA256,
+			MediaKey:          uploaded.MediaKey,
+			DirectPath:        &uploaded.DirectPath,        // Add missing DirectPath
+			MediaKeyTimestamp: int64Ptr(time.Now().Unix()), // Add missing MediaKeyTimestamp
 		},
 	}
 
-	_, err = c.client.SendMessage(ctx, recipientJID, msg)
+	resp, err := c.client.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
 		log.Printf("❌ Failed to send audio message: %v", err)
 		return fmt.Errorf("failed to send audio message: %w", err)
 	}
+
+	// Store the sent audio message in the database
+	audioMessage := &models.Message{
+		Time:      time.Now(),
+		Sender:    c.client.Store.ID.String(), // Our own JID
+		Content:   "[Voice Message]",          // Placeholder content for audio messages
+		IsFromMe:  true,
+		MediaType: "voice",
+		Filename:  filepath.Base(filePath),
+		ChatJID:   recipientJID.String(),
+		MessageID: resp.ID, // Use the actual message ID from WhatsApp response
+	}
+
+	if err := c.db.StoreMessage(audioMessage); err != nil {
+		log.Printf("⚠️ Failed to store sent audio message in database: %v", err)
+	} else {
+		log.Printf("✅ Sent audio message stored in database")
+	}
+
+	// Update chat info
+	c.updateChatInfo(recipientJID, "[Voice Message]", time.Now())
 
 	log.Printf("✅ Audio message sent successfully to %s", recipient)
 	return nil
@@ -770,6 +822,10 @@ func uint32Ptr(u uint32) *uint32 {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
 }
 
 // getAudioMimeType determines the MIME type based on file extension
@@ -980,7 +1036,12 @@ func (c *Client) processVoiceMessage(evt *events.Message, audioMsg *waE2E.AudioM
 		return
 	}
 
-	log.Printf("✅ Voice response sent successfully")
+	// Step 6: Also send text response for debugging purposes
+	log.Printf("🔍 DEBUG: Sending text response for debugging")
+	debugText := fmt.Sprintf("🔍 DEBUG - Transcribed: \"%s\"\n\n🤖 AI Response: \"%s\"", transcribedText, responseText)
+	c.sendAutoReply(info.Chat.String(), debugText)
+
+	log.Printf("✅ Voice response and debug text sent successfully")
 }
 
 // downloadVoiceMessage downloads a voice message from WhatsApp
@@ -1137,8 +1198,8 @@ func (c *Client) generateSpeechWithLocalService(text, outputPath string) error {
 	tempWavPath := outputPath + ".wav"
 	// defer os.Remove(tempWavPath) // TEMPORARILY DISABLED FOR DEBUGGING
 
-	// Use curl to call the local TTS service
-	cmd := exec.Command("curl", "-X", "POST", "-F", fmt.Sprintf("text=%s", text), "http://localhost:8001/text-to-speech", "--output", tempWavPath)
+	// Use curl to call the TTS service
+	cmd := exec.Command("curl", "-X", "POST", "-F", fmt.Sprintf("text=%s", text), c.ttsUrl, "--output", tempWavPath)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("local TTS service call failed: %w", err)
 	}
@@ -1200,12 +1261,34 @@ func (c *Client) sendAutoReply(chatJID string, message string) {
 		Conversation: &message,
 	}
 
-	_, err = c.client.SendMessage(ctx, recipientJID, msg)
+	resp, err := c.client.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
 		log.Printf("❌ Failed to send auto-reply: %v", err)
-	} else {
-		log.Printf("✅ Auto-reply sent: %s", message)
+		return
 	}
+
+	// Store the auto-reply message in the database
+	autoReplyMessage := &models.Message{
+		Time:      time.Now(),
+		Sender:    c.client.Store.ID.String(), // Our own JID
+		Content:   message,
+		IsFromMe:  true,
+		MediaType: "text",
+		Filename:  "",
+		ChatJID:   chatJID,
+		MessageID: resp.ID, // Use the actual message ID from WhatsApp response
+	}
+
+	if err := c.db.StoreMessage(autoReplyMessage); err != nil {
+		log.Printf("⚠️ Failed to store auto-reply message in database: %v", err)
+	} else {
+		log.Printf("✅ Auto-reply message stored in database")
+	}
+
+	// Update chat info
+	c.updateChatInfo(recipientJID, message, time.Now())
+
+	log.Printf("✅ Auto-reply sent: %s", message)
 }
 
 // createLlamaStackClient creates and configures a LlamaStack client
