@@ -1,0 +1,368 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "A WhatsApp server providing WhatsApp functionality",
+        "title": "WhatsApp Server API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {
+            "name": "API Support",
+            "url": "http://www.swagger.io/support",
+            "email": "support@swagger.io"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/api/list-messages": {
+            "post": {
+                "description": "Retrieve messages from a specific WhatsApp chat",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API"
+                ],
+                "summary": "List messages from a chat",
+                "parameters": [
+                    {
+                        "description": "List messages request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.ListMessagesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of messages",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/search-contacts": {
+            "post": {
+                "description": "Search for WhatsApp contacts by name or phone number",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API"
+                ],
+                "summary": "Search for contacts",
+                "parameters": [
+                    {
+                        "description": "Search contacts request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.SearchContactsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of contacts",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/send-message": {
+            "post": {
+                "description": "Send a message to a WhatsApp contact or group",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API"
+                ],
+                "summary": "Send a WhatsApp message",
+                "parameters": [
+                    {
+                        "description": "Send message request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.SendMessageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Message sent confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/send-voice-note": {
+            "post": {
+                "description": "Upload and send an audio file as a WhatsApp voice message",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API"
+                ],
+                "summary": "Send a voice note via WhatsApp",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Recipient JID",
+                        "name": "recipient",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Audio file (.ogg opus format)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Voice note sent successfully",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SendVoiceNoteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Returns the current health status of the server",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Health check endpoint",
+                "responses": {
+                    "200": {
+                        "description": "Server is healthy",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/send": {
+            "post": {
+                "description": "Send an audio file as a WhatsApp voice message using media_path parameter",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API"
+                ],
+                "summary": "Send a voice message via WhatsApp (Python-style API)",
+                "parameters": [
+                    {
+                        "description": "Send request with recipient and media_path",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SendRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Voice message sent successfully",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SendResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "handlers.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "healthy"
+                },
+                "time": {
+                    "type": "string",
+                    "example": "2025-09-24T23:56:42+02:00"
+                }
+            }
+        },
+        "handlers.SendRequest": {
+            "type": "object",
+            "properties": {
+                "media_path": {
+                    "type": "string",
+                    "example": "/path/to/audio/file.ogg"
+                },
+                "recipient": {
+                    "type": "string",
+                    "example": "1234567890@s.whatsapp.net"
+                }
+            }
+        },
+        "handlers.SendResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Voice message sent successfully"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "handlers.SendVoiceNoteResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "example": ""
+                },
+                "filename": {
+                    "type": "string",
+                    "example": "voice_note.ogg"
+                },
+                "recipient": {
+                    "type": "string",
+                    "example": "1234567890@s.whatsapp.net"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2025-09-25T00:50:40+02:00"
+                }
+            }
+        },
+        "main.ListMessagesRequest": {
+            "type": "object",
+            "properties": {
+                "chat_jid": {
+                    "type": "string",
+                    "example": "1234567890@s.whatsapp.net"
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 50
+                },
+                "offset": {
+                    "type": "integer",
+                    "example": 0
+                }
+            }
+        },
+        "main.SearchContactsRequest": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "example": "John"
+                }
+            }
+        },
+        "main.SendMessageRequest": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Hello World"
+                },
+                "recipient": {
+                    "type": "string",
+                    "example": "1234567890@s.whatsapp.net"
+                }
+            }
+        }
+    }
+}

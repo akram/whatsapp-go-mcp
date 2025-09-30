@@ -152,6 +152,15 @@ setup-dirs:
 setup: setup-dirs deps install-tools
 	@echo "Development environment setup complete"
 
+# Generate OpenAPI documentation
+.PHONY: openapi
+openapi:
+	@echo "Generating OpenAPI documentation..."
+	@swag init -g main.go -o docs --parseDependency --parseInternal
+	@mv docs/swagger.json docs/openapi.json
+	@mv docs/swagger.yaml docs/openapi.yaml
+	@echo "OpenAPI documentation generated in docs/"
+
 # Generate documentation
 .PHONY: docs
 docs:
@@ -196,6 +205,7 @@ help:
 	@echo "  install-tools  - Install development tools"
 	@echo "  setup-dirs     - Create necessary directories"
 	@echo "  setup          - Setup development environment"
+	@echo "  openapi        - Generate OpenAPI documentation"
 	@echo "  docs           - Generate documentation"
 	@echo "  security       - Run security scan"
 	@echo "  benchmark      - Run benchmarks"

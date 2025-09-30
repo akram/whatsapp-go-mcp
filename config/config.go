@@ -12,6 +12,7 @@ type Config struct {
 	MediaDir  string
 	LogLevel  string
 	QRCodeDir string
+	TTSUrl    string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -22,6 +23,7 @@ func LoadConfig() *Config {
 		MediaDir:  getEnv("WHATSAPP_MEDIA_DIR", "./media"),
 		LogLevel:  getEnv("LOG_LEVEL", "info"),
 		QRCodeDir: getEnv("QR_CODE_DIR", "./qr_codes"),
+		TTSUrl:    getEnv("TTS_URL", "http://localhost:8001/text-to-speech"),
 	}
 }
 

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	whatsappmcp "whatsapp-go-mcp/mcp"
+	"whatsapp-go-mcp/whatsapp"
 )
 
 // SendVoiceNoteRequest represents a request to send a voice note
@@ -42,7 +41,7 @@ type SendVoiceNoteResponse struct {
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /api/send-voice-note [post]
-func HandleSendVoiceNote(w http.ResponseWriter, r *http.Request, mcpServer *whatsappmcp.WhatsAppMCPServer) {
+func HandleSendVoiceNote(w http.ResponseWriter, r *http.Request, client *whatsapp.Client) {
 	// Parse multipart form (max 32MB)
 	err := r.ParseMultipartForm(32 << 20) // 32MB
 	if err != nil {
@@ -102,10 +101,7 @@ func HandleSendVoiceNote(w http.ResponseWriter, r *http.Request, mcpServer *what
 
 	// Send voice note
 	log.Printf("📤 Sending voice note to %s: %s", recipient, header.Filename)
-	result, err := mcpServer.SendAudioMessage(context.Background(), map[string]interface{}{
-		"recipient": recipient,
-		"file_path": tempFile.Name(),
-	})
+	err = client.SendAudioMessage(recipient, tempFile.Name())
 	if err != nil {
 		log.Printf("❌ Failed to send voice note: %v", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -120,7 +116,7 @@ func HandleSendVoiceNote(w http.ResponseWriter, r *http.Request, mcpServer *what
 		return
 	}
 
-	log.Printf("✅ Voice note sent successfully: %v", result)
+	log.Printf("✅ Voice note sent successfully")
 
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
@@ -157,7 +153,7 @@ type SendResponse struct {
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /send [post]
-func HandleSend(w http.ResponseWriter, r *http.Request, mcpServer *whatsappmcp.WhatsAppMCPServer) {
+func HandleSend(w http.ResponseWriter, r *http.Request, client *whatsapp.Client) {
 	var req SendRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("❌ Failed to decode request: %v", err)
@@ -206,12 +202,9 @@ func HandleSend(w http.ResponseWriter, r *http.Request, mcpServer *whatsappmcp.W
 		}()
 	}
 
-	// Send voice message using MCP server
+	// Send voice message using WhatsApp client
 	log.Printf("📤 Sending voice message to %s: %s", req.Recipient, mediaPath)
-	result, err := mcpServer.SendAudioMessage(context.Background(), map[string]interface{}{
-		"recipient": req.Recipient,
-		"file_path": mediaPath,
-	})
+	err := client.SendAudioMessage(req.Recipient, mediaPath)
 	if err != nil {
 		log.Printf("❌ Failed to send voice message: %v", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -224,7 +217,7 @@ func HandleSend(w http.ResponseWriter, r *http.Request, mcpServer *whatsappmcp.W
 		return
 	}
 
-	log.Printf("✅ Voice message sent successfully: %v", result)
+	log.Printf("✅ Voice message sent successfully")
 
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")

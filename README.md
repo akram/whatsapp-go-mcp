@@ -1,6 +1,6 @@
-# WhatsApp Go MCP Server
+# WhatsApp Go Server
 
-A Golang MCP (Model Context Protocol) server that provides WhatsApp functionality using the `go.mau.fi/whatsmeow` library and the `gomcp-sdk` for proper MCP implementation.
+A Golang server that provides WhatsApp functionality using the `go.mau.fi/whatsmeow` library with direct HTTP API endpoints.
 
 ## Features
 
@@ -11,17 +11,17 @@ A Golang MCP (Model Context Protocol) server that provides WhatsApp functionalit
 - **Voice Messages**: Send audio files as WhatsApp voice messages
 - **🎤 Voice Note Processing**: Automatic voice note transcription and AI-powered responses
 - **Message History**: Store and retrieve message history with SQLite
-- **MCP Compliance**: Full MCP 2024-11-05 specification support
+- **Direct HTTP API**: RESTful API endpoints for all WhatsApp operations
 - **QR Code Authentication**: Terminal-based QR code scanning for WhatsApp login
 
 ## Architecture
 
 The project is organized into several packages for better maintainability:
 
-- `main.go` - Main server entry point with SSE transport
+- `main.go` - Main server entry point with HTTP API
 - `models/` - Database models and SQLite operations
 - `whatsapp/` - WhatsApp client wrapper using whatsmeow
-- `mcp/` - MCP server implementation using gomcp-sdk
+- `handlers/` - HTTP request handlers for API endpoints
 - `config/` - Configuration management
 - `utils/` - Utility functions for file handling, logging, and validation
 
@@ -40,7 +40,7 @@ go mod tidy
 
 3. Build the application:
 ```bash
-go build -o whatsapp-mcp-server
+go build -o whatsapp-server
 ```
 
 ## Configuration
@@ -57,22 +57,22 @@ The server can be configured using environment variables:
 
 1. Start the server:
 ```bash
-./whatsapp-mcp-server
+./whatsapp-server
 ```
 
 2. The server will start and display a QR code in the terminal for WhatsApp authentication.
 
 3. Scan the QR code with your WhatsApp mobile app to authenticate.
 
-4. Once authenticated, the server will be ready to handle MCP requests.
+4. Once authenticated, the server will be ready to handle HTTP API requests.
 
 ## OpenAPI Documentation
 
-The server includes automatic OpenAPI/Swagger documentation generation:
+The server includes automatic OpenAPI documentation generation:
 
-- **Swagger UI**: Visit `http://localhost:8080/swagger/` to view the interactive API documentation
-- **OpenAPI JSON**: Access the raw OpenAPI specification at `http://localhost:8080/swagger/doc.json`
-- **OpenAPI YAML**: Access the raw OpenAPI specification at `http://localhost:8080/swagger/doc.yaml`
+- **OpenAPI UI**: Visit `http://localhost:8080/openapi` to view the interactive API documentation
+- **OpenAPI JSON**: Access the raw OpenAPI specification at `http://localhost:8080/openapi.json`
+- **OpenAPI YAML**: Access the raw OpenAPI specification at `http://localhost:8080/openapi.yaml`
 
 The documentation is automatically generated from code annotations and includes:
 - API endpoint descriptions
@@ -80,76 +80,37 @@ The documentation is automatically generated from code annotations and includes:
 - Example values
 - Interactive testing interface
 
-## Tools Discovery
-
-The server provides a tools discovery endpoint that returns all available MCP tools:
-
-- **Tools List**: Visit `http://localhost:8080/tools` to get a JSON list of all available tools
-- **Tool Schemas**: Each tool includes its input schema with parameter descriptions and requirements
-- **Dynamic Discovery**: Clients can programmatically discover available tools and their capabilities
-
-Example tools response:
-```json
-{
-  "tools": [
-    {
-      "name": "search_contacts",
-      "description": "Search for contacts by name or phone number",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query for contacts"
-          }
-        },
-        "required": ["query"]
-      }
-    }
-  ]
-}
-```
-
 ## API Endpoints
 
 All endpoints run on the same port (default: 8080):
 
-### MCP Server (SSE Transport)
-- `GET /events` - Server-Sent Events endpoint for MCP communication
-- `GET /sse` - Alias for /events endpoint
-
 ### Health Check
 - `GET /health` - Server health status
 
-### Tools Discovery
-- `GET /tools` - List all available MCP tools with their schemas
+### WhatsApp API
+- `POST /api/list-messages` - List messages from a chat
+- `POST /api/search-contacts` - Search for contacts
+- `POST /api/send-message` - Send a WhatsApp message
+- `POST /api/send-voice-note` - Send a voice note (multipart/form-data)
+- `POST /send` - Send voice message (Python-style API with media_path)
 
 ### Documentation
-- `GET /swagger/` - OpenAPI/Swagger documentation UI
-- `GET /swagger/doc.json` - OpenAPI specification in JSON format
-- `GET /swagger/doc.yaml` - OpenAPI specification in YAML format
+- `GET /openapi` - OpenAPI documentation UI
+- `GET /openapi.json` - OpenAPI specification in JSON format
+- `GET /openapi.yaml` - OpenAPI specification in YAML format
 
-## MCP Methods
+## API Methods
 
-The server implements the following MCP methods:
+The server provides the following HTTP API methods:
 
 ### Contact Management
-- `search_contacts` - Search for contacts by name or phone number
-- `get_contact_chats` - List all chats involving a specific contact
+- `POST /api/search-contacts` - Search for contacts by name or phone number
 
 ### Message Management
-- `list_messages` - Retrieve messages with optional filters and context
-- `get_message_context` - Retrieve context around a specific message
-- `get_last_interaction` - Get the most recent message with a contact
-- `send_message` - Send a WhatsApp message to a specified recipient
-- `send_file` - Send a file (image, video, document) to a recipient
-- `send_audio_message` - Send an audio file as a WhatsApp voice message
-- `download_media` - Download media from a WhatsApp message
-
-### Chat Management
-- `list_chats` - List available chats with metadata
-- `get_chat` - Get information about a specific chat
-- `get_direct_chat_by_contact` - Find a direct chat with a specific contact
+- `POST /api/list-messages` - Retrieve messages with optional filters and context
+- `POST /api/send-message` - Send a WhatsApp message to a specified recipient
+- `POST /api/send-voice-note` - Send an audio file as a WhatsApp voice message
+- `POST /send` - Send voice message (Python-style API with media_path)
 
 ## Database Schema
 
@@ -201,42 +162,37 @@ CREATE TABLE chats (
 ## Example Usage
 
 ### Search Contacts
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "search_contacts",
-  "params": {
-    "query": "John"
-  }
-}
+```bash
+curl -X POST http://localhost:8080/api/search-contacts \
+  -H "Content-Type: application/json" \
+  -d '{"query": "John"}'
 ```
 
 ### Send Message
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "send_message",
-  "params": {
+```bash
+curl -X POST http://localhost:8080/api/send-message \
+  -H "Content-Type: application/json" \
+  -d '{
     "recipient": "1234567890@s.whatsapp.net",
-    "message": "Hello from MCP!"
-  }
-}
+    "message": "Hello from WhatsApp API!"
+  }'
 ```
 
-### Send File
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "send_file",
-  "params": {
+### Send Voice Note
+```bash
+curl -X POST http://localhost:8080/api/send-voice-note \
+  -F "recipient=1234567890@s.whatsapp.net" \
+  -F "file=@/path/to/audio.ogg"
+```
+
+### Send Voice Message (Python-style)
+```bash
+curl -X POST http://localhost:8080/send \
+  -H "Content-Type: application/json" \
+  -d '{
     "recipient": "1234567890@s.whatsapp.net",
-    "file_path": "/path/to/image.jpg",
-    "caption": "Check out this image!"
-  }
-}
+    "media_path": "/path/to/audio.ogg"
+  }'
 ```
 
 ## Voice Note Processing
@@ -274,6 +230,16 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 For detailed voice processing documentation, see [VOICE_PROCESSING.md](VOICE_PROCESSING.md).
 
+## API Documentation
+
+The server provides OpenAPI 3.0 documentation with the following endpoints:
+
+- **Interactive UI**: `GET /openapi` - Modern Swagger UI for exploring the API
+- **JSON Specification**: `GET /openapi.json` - OpenAPI 3.0 specification in JSON format
+- **YAML Specification**: `GET /openapi.yaml` - OpenAPI 3.0 specification in YAML format
+
+The documentation is automatically generated from Go code annotations using the `swag-openapi3` tool.
+
 ## Media Support
 
 The server supports various media types:
@@ -300,12 +266,10 @@ The server supports various media types:
 ## Dependencies
 
 - `go.mau.fi/whatsmeow` v0.0.0-20250922112717-258fd9454b95 - WhatsApp client library
-- `github.com/fredcamaral/gomcp-sdk` v1.2.0 - MCP server implementation
 - `github.com/mdp/qrterminal/v3` v3.2.0 - QR code terminal display
 - `github.com/mattn/go-sqlite3` v1.14.32 - SQLite database driver
-- `github.com/swaggo/http-swagger` v1.3.4 - Swagger UI for HTTP servers
-- `github.com/swaggo/swag` v1.16.6 - Swagger documentation generator
 - `github.com/gorilla/mux` v1.8.1 - HTTP router and URL matcher
+- `github.com/llamastack/llama-stack-client-go` v0.1.0-alpha.1 - AI client for voice processing
 
 ## License
 

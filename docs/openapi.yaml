@@ -1,0 +1,249 @@
+basePath: /
+definitions:
+  handlers.HealthResponse:
+    properties:
+      status:
+        example: healthy
+        type: string
+      time:
+        example: "2025-09-24T23:56:42+02:00"
+        type: string
+    type: object
+  handlers.SendRequest:
+    properties:
+      media_path:
+        example: /path/to/audio/file.ogg
+        type: string
+      recipient:
+        example: 1234567890@s.whatsapp.net
+        type: string
+    type: object
+  handlers.SendResponse:
+    properties:
+      message:
+        example: Voice message sent successfully
+        type: string
+      success:
+        example: true
+        type: boolean
+    type: object
+  handlers.SendVoiceNoteResponse:
+    properties:
+      error:
+        example: ""
+        type: string
+      filename:
+        example: voice_note.ogg
+        type: string
+      recipient:
+        example: 1234567890@s.whatsapp.net
+        type: string
+      success:
+        example: true
+        type: boolean
+      timestamp:
+        example: "2025-09-25T00:50:40+02:00"
+        type: string
+    type: object
+  main.ListMessagesRequest:
+    properties:
+      chat_jid:
+        example: 1234567890@s.whatsapp.net
+        type: string
+      limit:
+        example: 50
+        type: integer
+      offset:
+        example: 0
+        type: integer
+    type: object
+  main.SearchContactsRequest:
+    properties:
+      query:
+        example: John
+        type: string
+    type: object
+  main.SendMessageRequest:
+    properties:
+      message:
+        example: Hello World
+        type: string
+      recipient:
+        example: 1234567890@s.whatsapp.net
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: A WhatsApp server providing WhatsApp functionality
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: WhatsApp Server API
+  version: "1.0"
+paths:
+  /api/list-messages:
+    post:
+      consumes:
+      - application/json
+      description: Retrieve messages from a specific WhatsApp chat
+      parameters:
+      - description: List messages request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.ListMessagesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of messages
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List messages from a chat
+      tags:
+      - API
+  /api/search-contacts:
+    post:
+      consumes:
+      - application/json
+      description: Search for WhatsApp contacts by name or phone number
+      parameters:
+      - description: Search contacts request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.SearchContactsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of contacts
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Search for contacts
+      tags:
+      - API
+  /api/send-message:
+    post:
+      consumes:
+      - application/json
+      description: Send a message to a WhatsApp contact or group
+      parameters:
+      - description: Send message request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.SendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Message sent confirmation
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Send a WhatsApp message
+      tags:
+      - API
+  /api/send-voice-note:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload and send an audio file as a WhatsApp voice message
+      parameters:
+      - description: Recipient JID
+        in: formData
+        name: recipient
+        required: true
+        type: string
+      - description: Audio file (.ogg opus format)
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Voice note sent successfully
+          schema:
+            $ref: '#/definitions/handlers.SendVoiceNoteResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Send a voice note via WhatsApp
+      tags:
+      - API
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Returns the current health status of the server
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Server is healthy
+          schema:
+            $ref: '#/definitions/handlers.HealthResponse'
+      summary: Health check endpoint
+      tags:
+      - System
+  /send:
+    post:
+      consumes:
+      - application/json
+      description: Send an audio file as a WhatsApp voice message using media_path
+        parameter
+      parameters:
+      - description: Send request with recipient and media_path
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Voice message sent successfully
+          schema:
+            $ref: '#/definitions/handlers.SendResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Send a voice message via WhatsApp (Python-style API)
+      tags:
+      - API
+schemes:
+- http
+- https
+swagger: "2.0"

@@ -186,29 +186,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/events": {
-            "get": {
-                "description": "Establishes a Server-Sent Events connection for real-time MCP communication",
-                "consumes": [
-                    "text/event-stream"
-                ],
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "MCP"
-                ],
-                "summary": "Server-Sent Events endpoint for MCP communication",
-                "responses": {
-                    "200": {
-                        "description": "SSE connection established",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
         "/health": {
             "get": {
                 "description": "Returns the current health status of the server",
@@ -232,55 +209,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/sse": {
-            "get": {
-                "description": "Establishes a Server-Sent Events connection for real-time MCP communication",
-                "consumes": [
-                    "text/event-stream"
-                ],
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "MCP"
-                ],
-                "summary": "Server-Sent Events endpoint for MCP communication",
-                "responses": {
-                    "200": {
-                        "description": "SSE connection established",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
-        "/tools": {
-            "get": {
-                "description": "Returns a list of all available MCP tools with their schemas",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "MCP"
-                ],
-                "summary": "List available MCP tools",
-                "responses": {
-                    "200": {
-                        "description": "List of available tools",
-                        "schema": {
-                            "$ref": "#/definitions/tools.ToolsResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/tools/{tool_name}/execute": {
+        "/send": {
             "post": {
-                "description": "Execute any available MCP tool with the provided parameters",
+                "description": "Send an audio file as a WhatsApp voice message using media_path parameter",
                 "consumes": [
                     "application/json"
                 ],
@@ -290,34 +221,27 @@ const docTemplate = `{
                 "tags": [
                     "API"
                 ],
-                "summary": "Execute a specific MCP tool",
+                "summary": "Send a voice message via WhatsApp (Python-style API)",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Name of the tool to execute",
-                        "name": "tool_name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Tool execution request",
+                        "description": "Send request with recipient and media_path",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.ExecuteToolRequest"
+                            "$ref": "#/definitions/handlers.SendRequest"
                         }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Tool execution result",
+                        "description": "Voice message sent successfully",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ExecuteToolResponse"
+                            "$ref": "#/definitions/handlers.SendResponse"
                         }
                     },
-                    "404": {
-                        "description": "Tool not found",
+                    "400": {
+                        "description": "Bad request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -326,7 +250,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "Tool execution error",
+                        "description": "Internal server error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -339,33 +263,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.ExecuteToolRequest": {
-            "type": "object",
-            "properties": {
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            }
-        },
-        "handlers.ExecuteToolResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "type": "string",
-                    "example": ""
-                },
-                "result": {},
-                "success": {
-                    "type": "boolean",
-                    "example": true
-                },
-                "tool_name": {
-                    "type": "string",
-                    "example": "search_contacts"
-                }
-            }
-        },
         "handlers.HealthResponse": {
             "type": "object",
             "properties": {
@@ -376,6 +273,32 @@ const docTemplate = `{
                 "time": {
                     "type": "string",
                     "example": "2025-09-24T23:56:42+02:00"
+                }
+            }
+        },
+        "handlers.SendRequest": {
+            "type": "object",
+            "properties": {
+                "media_path": {
+                    "type": "string",
+                    "example": "/path/to/audio/file.ogg"
+                },
+                "recipient": {
+                    "type": "string",
+                    "example": "1234567890@s.whatsapp.net"
+                }
+            }
+        },
+        "handlers.SendResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Voice message sent successfully"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -442,34 +365,6 @@ const docTemplate = `{
                     "example": "1234567890@s.whatsapp.net"
                 }
             }
-        },
-        "tools.Tool": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "example": "Search for contacts by name or phone number"
-                },
-                "inputSchema": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "name": {
-                    "type": "string",
-                    "example": "search_contacts"
-                }
-            }
-        },
-        "tools.ToolsResponse": {
-            "type": "object",
-            "properties": {
-                "tools": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/tools.Tool"
-                    }
-                }
-            }
         }
     }
 }`
@@ -480,8 +375,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "localhost:8080",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
-	Title:            "WhatsApp MCP Server API",
-	Description:      "A WhatsApp MCP (Model Context Protocol) server providing WhatsApp functionality",
+	Title:            "WhatsApp Server API",
+	Description:      "A WhatsApp server providing WhatsApp functionality",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
