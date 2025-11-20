@@ -7,20 +7,23 @@ USER root
 # Install necessary packages
 RUN dnf install -y git sqlite-devel gcc && dnf clean all
 
-# Switch back to the default user (1001) for security
-USER 1001
-
-# Set the working directory
+# Set the working directory and create it as root
 WORKDIR /app
 
-# Copy go mod files
+# Copy go mod files as root
 COPY go.mod go.sum ./
+
+# Copy the source code as root
+COPY . .
+
+# Change ownership of /app to user 1001
+RUN chown -R 1001:1001 /app
+
+# Switch to the default user (1001) for security
+USER 1001
 
 # Download dependencies
 RUN go mod download
-
-# Copy the source code
-COPY . .
 
 # Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -a -installsuffix cgo -o whatsapp-mcp-server .
