@@ -32,13 +32,14 @@ import (
 
 // Client wraps the WhatsApp client with additional functionality
 type Client struct {
-	client         *whatsmeow.Client
-	db             *models.Database
-	deviceStore    *store.Device
-	eventHandlerID uint32
-	mediaDir       string
-	ttsUrl         string
-	sttUrl         string
+	client              *whatsmeow.Client
+	db                  *models.Database
+	deviceStore         *store.Device
+	eventHandlerID      uint32
+	mediaDir            string
+	ttsUrl              string
+	sttUrl              string
+	conversationHistory map[string][]map[string]interface{} // Per-chat conversation history for Responses API
 }
 
 // NewClient creates a new WhatsApp client
@@ -70,13 +71,17 @@ func NewClient(dbPath, mediaDir, ttsUrl, sttUrl string) (*Client, error) {
 		return nil, fmt.Errorf("failed to create media directory: %w", err)
 	}
 
+	// Initialize conversation history map
+	conversationHistory := make(map[string][]map[string]interface{})
+
 	c := &Client{
-		client:      client,
-		db:          database,
-		deviceStore: deviceStore,
-		mediaDir:    mediaDir,
-		ttsUrl:      ttsUrl,
-		sttUrl:      sttUrl,
+		client:              client,
+		db:                  database,
+		deviceStore:         deviceStore,
+		mediaDir:            mediaDir,
+		ttsUrl:              ttsUrl,
+		sttUrl:              sttUrl,
+		conversationHistory: conversationHistory,
 	}
 
 	// Add event handler
@@ -1494,16 +1499,27 @@ If you need to search for current banking information, use the knowledge search 
 	// Add MCP tool group configuration
 	// Note: The Agents API requires MCP servers to be pre-registered as tool groups
 	// Use LLAMASTACK_MCP_TOOL_GROUP to reference a registered MCP tool group
+	// MCP_URL and MCP_SERVER_LABEL are kept for reference/documentation purposes
+	// They can be used when registering the tool group via CLI or for future API support
+	mcpUrl := os.Getenv("MCP_URL")
+	mcpServerLabel := os.Getenv("MCP_SERVER_LABEL")
 	mcpToolGroup := os.Getenv("LLAMASTACK_MCP_TOOL_GROUP")
 
 	if mcpToolGroup != "" {
 		log.Printf("🔧 Adding MCP tool group: %s", mcpToolGroup)
+		if mcpUrl != "" {
+			log.Printf("📝 MCP URL reference: %s (label: %s)", mcpUrl, mcpServerLabel)
+		}
 		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
 			OfString: llamastack.String(mcpToolGroup),
 		})
 	} else {
+		if mcpUrl != "" {
+			log.Printf("⚠️ MCP_URL is set (%s) but LLAMASTACK_MCP_TOOL_GROUP is not configured", mcpUrl)
+			log.Printf("💡 Register your MCP server as a tool group first using:")
+			log.Printf("💡   llama-stack-client toolgroups register <toolgroup_id> --mcp-config '{\"server_url\":\"%s\",\"server_label\":\"%s\",\"require_approval\":\"never\"}'", mcpUrl, mcpServerLabel)
+		}
 		log.Printf("⚠️ No MCP tool group configured (set LLAMASTACK_MCP_TOOL_GROUP to enable MCP tools)")
-		log.Printf("💡 Register your MCP server as a tool group first, then reference it by name")
 		log.Printf("💡 Available tool groups: builtin::websearch, builtin::rag")
 	}
 
@@ -1537,11 +1553,29 @@ If you need to search for current banking information, use the knowledge search 
 	return agent, nil
 }
 
-// processWithLlamaStack processes a text message using LlamaStack agent
+// useResponsesAPI checks if we should use Responses API instead of Agents API
+func (c *Client) useResponsesAPI() bool {
+	useResponses := os.Getenv("LLAMASTACK_USE_RESPONSES_API")
+	return strings.ToLower(useResponses) == "true" || useResponses == "1"
+}
+
+// processWithLlamaStack processes a text message using LlamaStack
 func (c *Client) processWithLlamaStack(evt *events.Message, content string) {
 	info := evt.Info
 
-	log.Printf("🤖 Processing message with LlamaStack agent: %s", content)
+	// Check which API to use
+	if c.useResponsesAPI() {
+		log.Printf("🤖 Processing message with LlamaStack Responses API: %s", content)
+		c.processWithLlamaStackResponses(info.Chat.String(), content)
+	} else {
+		log.Printf("🤖 Processing message with LlamaStack Agents API: %s", content)
+		c.processWithLlamaStackAgents(evt, content)
+	}
+}
+
+// processWithLlamaStackAgents processes a text message using LlamaStack Agents API
+func (c *Client) processWithLlamaStackAgents(evt *events.Message, content string) {
+	info := evt.Info
 
 	// Create LlamaStack client
 	client, modelID, err := c.createLlamaStackClient()
@@ -1574,6 +1608,183 @@ func (c *Client) processWithLlamaStack(evt *events.Message, content string) {
 
 	// Send the generated response
 	c.sendAutoReply(info.Chat.String(), response)
+}
+
+// processWithLlamaStackResponses processes a text message using LlamaStack Responses API
+func (c *Client) processWithLlamaStackResponses(chatJID, content string) {
+	// Create LlamaStack client
+	client, modelID, err := c.createLlamaStackClient()
+	if err != nil {
+		log.Printf("❌ Failed to create LlamaStack client: %v", err)
+		c.sendAutoReply(chatJID, "Sorry, I'm having trouble connecting to my AI assistant right now. Please try again later.")
+		return
+	}
+
+	// Generate response using Responses API
+	response, err := c.generateResponseResponse(client, modelID, chatJID, content)
+	if err != nil {
+		log.Printf("❌ Failed to generate response: %v", err)
+		// Fall back to simple response
+		response = c.generateFallbackResponse(content)
+		log.Printf("🔄 Using fallback response: %s", response)
+	} else {
+		log.Printf("🤖 LlamaStack response: %s", response)
+	}
+
+	// Send the generated response
+	c.sendAutoReply(chatJID, response)
+}
+
+// generateResponseResponse generates a response using the LlamaStack Responses API
+func (c *Client) generateResponseResponse(client llamastack.Client, modelID, chatJID, userMessage string) (string, error) {
+	log.Printf("🤖 Generating response using Responses API with model: %s", modelID)
+	log.Printf("💬 User message: %s", userMessage)
+
+	// Get model instructions
+	modelInstructions := os.Getenv("MODEL_INSTRUCTIONS")
+	if modelInstructions == "" {
+		modelInstructions = `/no_think
+
+You are a helpful assistant with access to financial data through MCP tools.
+
+IMPORTANT: Transaction all data is from 2025.
+
+When asked questions, use available tools to find the answer. Follow these rules:
+
+1. Decide on the tool to use immediately without asking for confirmation
+
+2. If you need additional information, search for it using whatever details are provided
+
+3. Chain tool calls as needed - use results from one call as inputs to the next
+
+4. If one approach doesn't work, try alternative methods silently
+
+5. Do not narrate your process, explain failures, or describe what you're trying - just do it
+
+6. Only provide output when you have the final answer
+
+7. If you truly cannot find the information after multiple attempts, simply state what you were unable to find
+
+Just execute tool calls until you have an answer, then provide it.`
+	}
+
+	// Get or initialize conversation history for this chat
+	history, exists := c.conversationHistory[chatJID]
+	if !exists {
+		history = []map[string]interface{}{}
+	}
+
+	// Add user message to conversation history
+	history = append(history, map[string]interface{}{
+		"role":    "user",
+		"content": userMessage,
+	})
+
+	// Get vector store ID
+	vectorStoreName := os.Getenv("VECTOR_STORE_NAME")
+	if vectorStoreName == "" {
+		vectorStoreName = "redbank-kb-vector-store"
+	}
+	vectorStoreID, err := c.getVectorStore(client, vectorStoreName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get vector store: %w", err)
+	}
+
+	// Get MCP configuration
+	mcpUrl := os.Getenv("MCP_URL")
+	if mcpUrl == "" {
+		mcpUrl = "http://redbank-mcp-server:8000/mcp"
+	}
+	mcpServerLabel := os.Getenv("MCP_SERVER_LABEL")
+	if mcpServerLabel == "" {
+		mcpServerLabel = "dmcp"
+	}
+
+	// Create tools configuration
+	tools := []llamastack.ResponseNewParamsToolUnion{
+		// MCP tool
+		{
+			OfMcp: &llamastack.ResponseNewParamsToolMcp{
+				ServerLabel: mcpServerLabel,
+				ServerURL:   mcpUrl,
+				RequireApproval: llamastack.ResponseNewParamsToolMcpRequireApprovalUnion{
+					OfResponseNewsToolMcpRequireApprovalString: param.Opt[llamastack.ResponseNewParamsToolMcpRequireApprovalString]{
+						Value: llamastack.ResponseNewParamsToolMcpRequireApprovalStringNever,
+					},
+				},
+			},
+		},
+		// File search tool
+		{
+			OfFileSearch: &llamastack.ResponseNewParamsToolFileSearch{
+				VectorStoreIDs: []string{vectorStoreID},
+			},
+		},
+	}
+
+	// Convert history to the format expected by the API
+	inputArray := make([]llamastack.ResponseNewParamsInputArrayItemUnion, len(history))
+	for i, msg := range history {
+		if role, ok := msg["role"].(string); ok {
+			if content, ok := msg["content"].(string); ok {
+				var messageRole llamastack.ResponseNewParamsInputArrayItemOpenAIResponseMessageRole
+				if role == "user" {
+					messageRole = llamastack.ResponseNewParamsInputArrayItemOpenAIResponseMessageRoleUser
+				} else if role == "assistant" {
+					messageRole = llamastack.ResponseNewParamsInputArrayItemOpenAIResponseMessageRoleAssistant
+				} else {
+					continue // Skip unknown roles
+				}
+				inputArray[i] = llamastack.ResponseNewParamsInputArrayItemUnion{
+					OfOpenAIResponseMessage: &llamastack.ResponseNewParamsInputArrayItemOpenAIResponseMessage{
+						Role: messageRole,
+						Content: llamastack.ResponseNewParamsInputArrayItemOpenAIResponseMessageContentUnion{
+							OfString: param.Opt[string]{Value: content},
+						},
+					},
+				}
+			}
+		}
+	}
+
+	// Create response using Responses API
+	resp, err := client.Responses.New(context.TODO(), llamastack.ResponseNewParams{
+		Model:        modelID,
+		Instructions: param.Opt[string]{Value: modelInstructions},
+		Tools:        tools,
+		Input: llamastack.ResponseNewParamsInputUnion{
+			OfResponseNewsInputArray: inputArray,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create response: %w", err)
+	}
+
+	// Extract response text from output
+	var responseText string
+	for _, output := range resp.Output {
+		if msg := output.AsMessage(); msg.Role == llamastack.ResponseObjectOutputMessageRoleAssistant {
+			if msg.Content.OfString != "" {
+				responseText = msg.Content.OfString
+				break
+			}
+		}
+	}
+	if responseText == "" {
+		return "", fmt.Errorf("no response text found in output")
+	}
+
+	// Add assistant response to conversation history
+	history = append(history, map[string]interface{}{
+		"role":    "assistant",
+		"content": responseText,
+	})
+
+	// Update conversation history
+	c.conversationHistory[chatJID] = history
+
+	log.Printf("✅ Response generated successfully")
+	return responseText, nil
 }
 
 // generateAgentResponse generates a response using the LlamaStack agent
