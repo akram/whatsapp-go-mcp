@@ -1491,61 +1491,20 @@ If you need to search for current banking information, use the knowledge search 
 		},
 	}
 
-	// Add MCP server configuration
-	// Uses: type: "mcp", server_url, server_label, require_approval: "never"
-	mcpUrl := os.Getenv("MCP_URL")
+	// Add MCP tool group configuration
+	// Note: The Agents API requires MCP servers to be pre-registered as tool groups
+	// Use LLAMASTACK_MCP_TOOL_GROUP to reference a registered MCP tool group
 	mcpToolGroup := os.Getenv("LLAMASTACK_MCP_TOOL_GROUP")
-	mcpServerLabel := os.Getenv("MCP_SERVER_LABEL")
-	if mcpServerLabel == "" {
-		mcpServerLabel = "dmcp" // Default value
-	}
 
-	// Configure MCP server directly if URL is provided
-	if mcpUrl != "" {
-		log.Printf("🔧 Configuring MCP server directly: %s (label: %s)", mcpUrl, mcpServerLabel)
-		// Try using builtin::mcp tool group with server_url argument
-		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
-			OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
-				Name: "builtin::mcp",
-				Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
-					"server_url": {
-						OfString: param.Opt[string]{Value: mcpUrl},
-					},
-					"server_label": {
-						OfString: param.Opt[string]{Value: mcpServerLabel},
-					},
-					"require_approval": {
-						OfString: param.Opt[string]{Value: "never"},
-					},
-				},
-			},
-		})
-	} else if mcpToolGroup != "" {
-		// Fall back to tool group name reference if MCP URL not provided
-		log.Printf("🔧 Adding MCP tool group by name: %s", mcpToolGroup)
+	if mcpToolGroup != "" {
+		log.Printf("🔧 Adding MCP tool group: %s", mcpToolGroup)
 		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
 			OfString: llamastack.String(mcpToolGroup),
 		})
 	} else {
-		// Use default MCP URL (if no explicit configuration)
-		defaultMcpUrl := "http://redbank-mcp-server:8000/mcp"
-		log.Printf("🔧 Using default MCP server URL: %s (label: %s)", defaultMcpUrl, mcpServerLabel)
-		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
-			OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
-				Name: "builtin::mcp",
-				Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
-					"server_url": {
-						OfString: param.Opt[string]{Value: defaultMcpUrl},
-					},
-					"server_label": {
-						OfString: param.Opt[string]{Value: mcpServerLabel},
-					},
-					"require_approval": {
-						OfString: param.Opt[string]{Value: "never"},
-					},
-				},
-			},
-		})
+		log.Printf("⚠️ No MCP tool group configured (set LLAMASTACK_MCP_TOOL_GROUP to enable MCP tools)")
+		log.Printf("💡 Register your MCP server as a tool group first, then reference it by name")
+		log.Printf("💡 Available tool groups: builtin::websearch, builtin::rag")
 	}
 
 	// Create agent configuration with available tools
