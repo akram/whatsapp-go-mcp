@@ -25,6 +25,10 @@ spec:
           value: "8080"
         - name: LOG_LEVEL
           value: "info"
+        - name: STT_URL
+          value: "http://voice-api-service/speech-to-text"
+        - name: TTS_URL
+          value: "http://localhost:8001/text-to-speech"
         resources:
           requests:
             memory: "256Mi"

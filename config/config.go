@@ -13,6 +13,7 @@ type Config struct {
 	LogLevel  string
 	QRCodeDir string
 	TTSUrl    string
+	STTUrl    string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -24,6 +25,7 @@ func LoadConfig() *Config {
 		LogLevel:  getEnv("LOG_LEVEL", "info"),
 		QRCodeDir: getEnv("QR_CODE_DIR", "./qr_codes"),
 		TTSUrl:    getEnv("TTS_URL", "http://localhost:8001/text-to-speech"),
+		STTUrl:    getEnv("STT_URL", ""),
 	}
 }
 

@@ -170,7 +170,8 @@ func main() {
 	if ttsUrl == "" {
 		ttsUrl = "http://localhost:8001/text-to-speech"
 	}
-	client, err := whatsapp.NewClient(dbPath, mediaDir, ttsUrl)
+	sttUrl := os.Getenv("STT_URL")
+	client, err := whatsapp.NewClient(dbPath, mediaDir, ttsUrl, sttUrl)
 	if err != nil {
 		log.Fatalf("Failed to create WhatsApp client: %v", err)
 	}

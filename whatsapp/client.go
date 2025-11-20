@@ -38,10 +38,11 @@ type Client struct {
 	eventHandlerID uint32
 	mediaDir       string
 	ttsUrl         string
+	sttUrl         string
 }
 
 // NewClient creates a new WhatsApp client
-func NewClient(dbPath, mediaDir, ttsUrl string) (*Client, error) {
+func NewClient(dbPath, mediaDir, ttsUrl, sttUrl string) (*Client, error) {
 	// Create device store
 	ctx := context.Background()
 	logger := waLog.Noop
@@ -75,6 +76,7 @@ func NewClient(dbPath, mediaDir, ttsUrl string) (*Client, error) {
 		deviceStore: deviceStore,
 		mediaDir:    mediaDir,
 		ttsUrl:      ttsUrl,
+		sttUrl:      sttUrl,
 	}
 
 	// Add event handler
@@ -1111,21 +1113,87 @@ func (c *Client) speechToText(audioFilePath string) (string, error) {
 	return transcribedText, nil
 }
 
-// transcribeWithWhisper uses OpenAI Whisper API for transcription
+// transcribeWithWhisper uses external STT service, OpenAI Whisper API, or local whisper for transcription
 func (c *Client) transcribeWithWhisper(audioFilePath string) (string, error) {
-	// For now, we'll use a simple implementation
-	// In production, you would integrate with OpenAI Whisper API or local whisper
+	// Priority 1: Check if external STT service URL is configured
+	if c.sttUrl != "" {
+		log.Printf("🎙️ Using external STT service: %s", c.sttUrl)
+		return c.transcribeWithExternalService(audioFilePath)
+	}
 
-	// Check if we have OpenAI API key
+	// Priority 2: Check if we have OpenAI API key
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		// Fallback to local whisper if available
+	if apiKey != "" {
+		// TODO: Implement OpenAI Whisper API integration
+		log.Printf("⚠️ OpenAI Whisper API integration not yet implemented, falling back to local whisper")
+		// Fallback to local whisper for now
 		return c.transcribeWithLocalWhisper(audioFilePath)
 	}
 
-	// TODO: Implement OpenAI Whisper API integration
-	// For now, return a placeholder
-	return "Voice message transcribed (placeholder)", nil
+	// Priority 3: Fallback to local whisper if available
+	return c.transcribeWithLocalWhisper(audioFilePath)
+}
+
+// transcribeWithExternalService uses an external STT service for transcription
+func (c *Client) transcribeWithExternalService(audioFilePath string) (string, error) {
+	log.Printf("🎙️ Using external STT service: %s", c.sttUrl)
+
+	// Create a temporary file for the response
+	tempResponsePath := filepath.Join(c.mediaDir, fmt.Sprintf("stt_response_%d.txt", time.Now().Unix()))
+	defer os.Remove(tempResponsePath) // Clean up response file
+
+	// Use curl to POST the audio file to the STT service
+	// The service expects a file upload, typically with field name "file" or "audio"
+	cmd := exec.Command("curl", "-X", "POST", "-F", fmt.Sprintf("file=@%s", audioFilePath), c.sttUrl, "--output", tempResponsePath, "-s", "-S")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("❌ STT service call failed: %v, output: %s", err, string(output))
+		return "", fmt.Errorf("STT service call failed: %w", err)
+	}
+
+	// Check if the response file was created and has content
+	stat, err := os.Stat(tempResponsePath)
+	if err != nil || stat.Size() == 0 {
+		return "", fmt.Errorf("STT service did not return valid response")
+	}
+
+	// Read the transcription result
+	content, err := os.ReadFile(tempResponsePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read STT response: %w", err)
+	}
+
+	responseText := strings.TrimSpace(string(content))
+
+	// Try to parse as JSON if it looks like JSON (starts with { or [)
+	if strings.HasPrefix(responseText, "{") || strings.HasPrefix(responseText, "[") {
+		var jsonResponse struct {
+			Text       string `json:"text"`
+			Transcript string `json:"transcript"`
+			Result     string `json:"result"`
+		}
+		if err := json.Unmarshal(content, &jsonResponse); err == nil {
+			// Try different possible JSON field names
+			if jsonResponse.Text != "" {
+				return strings.TrimSpace(jsonResponse.Text), nil
+			}
+			if jsonResponse.Transcript != "" {
+				return strings.TrimSpace(jsonResponse.Transcript), nil
+			}
+			if jsonResponse.Result != "" {
+				return strings.TrimSpace(jsonResponse.Result), nil
+			}
+		}
+	}
+
+	// If not JSON or JSON parsing failed, return the raw text
+	if responseText == "" {
+		return "", fmt.Errorf("STT service returned empty response")
+	}
+
+	log.Printf("✅ STT service returned: %s", responseText)
+	return responseText, nil
 }
 
 // transcribeWithLocalWhisper uses local whisper installation for transcription
@@ -1359,6 +1427,26 @@ func (c *Client) listAvailableToolGroups(client llamastack.Client) error {
 	return nil
 }
 
+// getVectorStore gets the vector store ID by name
+func (c *Client) getVectorStore(client llamastack.Client, vectorStoreName string) (string, error) {
+	log.Printf("🔍 Looking up vector store by name: %s", vectorStoreName)
+
+	vectorStores, err := client.VectorStores.List(context.TODO(), llamastack.VectorStoreListParams{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list vector stores: %w", err)
+	}
+
+	// Find vector store by name
+	for _, store := range vectorStores.Data {
+		if store.Name == vectorStoreName {
+			log.Printf("✅ Found vector store ID: %s", store.ID)
+			return store.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("vector store with name '%s' not found", vectorStoreName)
+}
+
 // createLlamaStackAgent creates an agent with tools and instructions
 func (c *Client) createLlamaStackAgent(client llamastack.Client, modelID string) (*llamastack.AgentNewResponse, error) {
 	log.Printf("🤖 Creating LlamaStack agent with model: %s", modelID)
@@ -1377,28 +1465,95 @@ Always make the necessary tool calls first, then provide the user with the actua
 
 If you need to search for current banking information, use the knowledge search tool. If you need user-specific data, use the MCP tools with the phone number +353 85 148 0072.`
 
+	// Get vector store ID by name
+	vectorStoreName := os.Getenv("VECTOR_STORE_NAME")
+	if vectorStoreName == "" {
+		vectorStoreName = "redbank-kb-vector-store" // Default value
+	}
+
+	vectorStoreID, err := c.getVectorStore(client, vectorStoreName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vector store: %w", err)
+	}
+
+	// Build tool groups list
+	toolgroups := []llamastack.AgentConfigToolgroupUnionParam{
+		// Knowledge search tool with vector database (file_search equivalent)
+		{
+			OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
+				Name: "builtin::rag/knowledge_search",
+				Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
+					"vector_db_ids": {
+						OfAnyArray: []any{vectorStoreID},
+					},
+				},
+			},
+		},
+	}
+
+	// Add MCP server configuration
+	// Uses: type: "mcp", server_url, server_label, require_approval: "never"
+	mcpUrl := os.Getenv("MCP_URL")
+	mcpToolGroup := os.Getenv("LLAMASTACK_MCP_TOOL_GROUP")
+	mcpServerLabel := os.Getenv("MCP_SERVER_LABEL")
+	if mcpServerLabel == "" {
+		mcpServerLabel = "dmcp" // Default value
+	}
+
+	// Configure MCP server directly if URL is provided
+	if mcpUrl != "" {
+		log.Printf("🔧 Configuring MCP server directly: %s (label: %s)", mcpUrl, mcpServerLabel)
+		// Try using builtin::mcp tool group with server_url argument
+		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
+			OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
+				Name: "builtin::mcp",
+				Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
+					"server_url": {
+						OfString: param.Opt[string]{Value: mcpUrl},
+					},
+					"server_label": {
+						OfString: param.Opt[string]{Value: mcpServerLabel},
+					},
+					"require_approval": {
+						OfString: param.Opt[string]{Value: "never"},
+					},
+				},
+			},
+		})
+	} else if mcpToolGroup != "" {
+		// Fall back to tool group name reference if MCP URL not provided
+		log.Printf("🔧 Adding MCP tool group by name: %s", mcpToolGroup)
+		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
+			OfString: llamastack.String(mcpToolGroup),
+		})
+	} else {
+		// Use default MCP URL (if no explicit configuration)
+		defaultMcpUrl := "http://redbank-mcp-server:8000/mcp"
+		log.Printf("🔧 Using default MCP server URL: %s (label: %s)", defaultMcpUrl, mcpServerLabel)
+		toolgroups = append(toolgroups, llamastack.AgentConfigToolgroupUnionParam{
+			OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
+				Name: "builtin::mcp",
+				Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
+					"server_url": {
+						OfString: param.Opt[string]{Value: defaultMcpUrl},
+					},
+					"server_label": {
+						OfString: param.Opt[string]{Value: mcpServerLabel},
+					},
+					"require_approval": {
+						OfString: param.Opt[string]{Value: "never"},
+					},
+				},
+			},
+		})
+	}
+
 	// Create agent configuration with available tools
 	agentConfig := llamastack.AgentConfigParam{
 		Instructions: instructions,
 		Model:        modelID, // Use the model from environment (vllm-inference/llama-3-2-3b-instruct)
 		Name:         llamastack.String("WhatsApp Banking Assistant"),
-		Toolgroups: []llamastack.AgentConfigToolgroupUnionParam{
-			// Knowledge search tool with vector database
-			{
-				OfAgentToolGroupWithArgs: &llamastack.AgentConfigToolgroupAgentToolGroupWithArgsParam{
-					Name: "builtin::rag/knowledge_search",
-					Args: map[string]llamastack.AgentConfigToolgroupAgentToolGroupWithArgsArgUnionParam{
-						"vector_db_ids": {
-							OfAnyArray: []any{"vs_1f1dd1b7-49ad-4ceb-8e8d-f0bf9afe2179"},
-						},
-					},
-				},
-			},
-			// WhatsApp MCP tools for user information (using only one to avoid conflicts)
-			{
-				OfString: llamastack.String("mcp::redbank-financials"),
-			},
-		},
+		Toolgroups:   toolgroups,
 		ToolConfig: llamastack.AgentConfigToolConfigParam{
 			ToolChoice: "auto", // Use "auto" to let the agent decide when to use tools
 		},
@@ -1409,6 +1564,13 @@ If you need to search for current banking information, use the knowledge search 
 		AgentConfig: agentConfig,
 	})
 	if err != nil {
+		// Check if error is related to tool group not found
+		errStr := err.Error()
+		if strings.Contains(errStr, "Tool Group") && strings.Contains(errStr, "not found") {
+			log.Printf("❌ Tool Group error detected. Available tool groups were listed above.")
+			log.Printf("💡 Tip: Set LLAMASTACK_MCP_TOOL_GROUP environment variable to a valid tool group name")
+			log.Printf("💡 Or remove the MCP tool group from configuration if not needed")
+		}
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 
