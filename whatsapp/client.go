@@ -106,13 +106,37 @@ func (c *Client) Connect(ctx context.Context) error {
 
 		for evt := range qrChan {
 			if evt.Event == "code" {
-				// Print QR code to terminal using qrterminal library
+				// Display QR code
+				fmt.Println("\n📱 WhatsApp Registration")
 				fmt.Println("Scan the QR code below with WhatsApp:")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+
+				// Display PIN instructions
+				fmt.Println("\n🔑 Or use Pairing Code (PIN):")
+				fmt.Println("   WhatsApp > Settings > Linked Devices > Link a Device")
+				fmt.Println("   > Link with Phone Number Instead")
+				fmt.Println("   (The PIN will appear on your phone)")
+
+				// Display PIN if detected in event
+				if len(evt.Code) == 8 && isNumeric(evt.Code) {
+					fmt.Println("\n🔑 Pairing Code:", evt.Code)
+				}
+				fmt.Println()
+			} else if evt.Event == "timeout" {
+				fmt.Println("\n⏱️ QR Code expired. Waiting for new code...")
+				fmt.Println("Or use PIN method: WhatsApp > Settings > Linked Devices > Link a Device > Link with Phone Number Instead")
+				log.Printf("⚠️ QR code expired, waiting for new code or pairing code...")
 			} else if evt.Event == "success" {
-				fmt.Println("Successfully logged in!")
+				fmt.Println("\n✅ Successfully logged in!")
 				log.Printf("✅ WhatsApp login successful")
 				break
+			} else {
+				log.Printf("📱 QR Channel Event: %s", evt.Event)
+				// Display PIN if detected
+				if evt.Code != "" && len(evt.Code) == 8 && isNumeric(evt.Code) {
+					fmt.Println("\n🔑 Pairing Code:", evt.Code)
+					fmt.Println("Enter this in WhatsApp: Settings > Linked Devices > Link a Device > Link with Phone Number Instead")
+				}
 			}
 		}
 	} else {
@@ -928,6 +952,16 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// isNumeric checks if a string contains only numeric characters
+func isNumeric(s string) bool {
+	for _, char := range s {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // processTextMessage handles text message processing (commands, auto-replies, etc.)
